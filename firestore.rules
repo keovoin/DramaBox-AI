@@ -6,6 +6,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Dramas collection (Public read for all users; write allowed for uploads)
+    match /dramas/{dramaId} {
+      allow read, write: if true;
+    }
+
     // Users collection
     match /users/{userId} {
       allow read: if request.auth != null && request.auth.uid == userId;

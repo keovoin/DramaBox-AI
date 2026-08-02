@@ -1,8 +1,8 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
-import { getFirestore, doc, setDoc, getDoc, getDocFromServer } from "firebase/firestore";
+import { getFirestore, doc, setDoc, getDoc, getDocFromServer, collection, onSnapshot, deleteDoc } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
-import { UserProfile } from "../types";
+import { UserProfile, Drama } from "../types";
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -88,6 +88,46 @@ export async function fetchUserProfileFromFirestore(userId: string): Promise<Use
   return null;
 }
 
+// Global Drama Catalog Sync Functions
+export async function syncDramaToFirestore(drama: Drama): Promise<void> {
+  if (!drama.id) return;
+  const dramaRef = doc(db, "dramas", drama.id);
+  try {
+    await setDoc(dramaRef, {
+      ...drama,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (error) {
+    console.error(`Failed to sync drama ${drama.id} to Firestore:`, error);
+  }
+}
+
+export async function deleteDramaFromFirestore(dramaId: string): Promise<void> {
+  if (!dramaId) return;
+  const dramaRef = doc(db, "dramas", dramaId);
+  try {
+    await deleteDoc(dramaRef);
+  } catch (error) {
+    console.error(`Failed to delete drama ${dramaId} from Firestore:`, error);
+  }
+}
+
+// Realtime Listener for Dramas across all production devices
+export function subscribeToDramasFromFirestore(onUpdate: (dramas: Drama[]) => void) {
+  const dramasRef = collection(db, "dramas");
+  return onSnapshot(dramasRef, (snapshot) => {
+    const items: Drama[] = [];
+    snapshot.forEach((docSnap) => {
+      items.push(docSnap.data() as Drama);
+    });
+    if (items.length > 0) {
+      onUpdate(items);
+    }
+  }, (error) => {
+    console.error("Firestore dramas subscription error:", error);
+  });
+}
+
 // Trigger Google Popup Login via Firebase Auth
 export async function loginWithFirebaseGoogle(): Promise<UserProfile> {
   try {
@@ -119,3 +159,4 @@ export async function loginWithFirebaseGoogle(): Promise<UserProfile> {
 export async function logoutFirebase(): Promise<void> {
   await signOut(auth);
 }
+

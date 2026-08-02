@@ -184,15 +184,34 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     setNewComment("");
   };
 
-  const handleCopyLink = () => {
+  const handleCopyLink = async () => {
     const shareUrl = `${window.location.origin}?drama=${encodeURIComponent(drama.id)}&ep=${currentEpNum}`;
-    navigator.clipboard.writeText(shareUrl);
-    setCopiedLink(true);
-    setShareToast(`Copied Ep ${currentEpNum} share link!`);
-    setTimeout(() => {
-      setCopiedLink(false);
-      setShareToast(null);
-    }, 2500);
+    const shareData = {
+      title: `${drama.title} - Episode ${currentEpNum}`,
+      text: `Watch Episode ${currentEpNum} of "${drama.title}" on DramaHub!`,
+      url: shareUrl,
+    };
+
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch (err: any) {
+        if (err.name === "AbortError") return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedLink(true);
+      setShareToast(`Copied Ep ${currentEpNum} share link!`);
+      setTimeout(() => {
+        setCopiedLink(false);
+        setShareToast(null);
+      }, 2500);
+    } catch (err) {
+      console.error("Clipboard copy failed:", err);
+    }
   };
 
   return (

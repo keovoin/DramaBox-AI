@@ -426,6 +426,32 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     { day: "Today", activeUsers: currentUsersList.length, watchSessions: userWatchHistoryCount },
   ];
 
+  // Top 5 Most Viewed Dramas Dataset for Recharts Bar Chart
+  const parseViewsToNum = (str?: string) => {
+    if (!str) return 0;
+    if (str.includes("M") || str.includes("m")) return parseFloat(str) * 1000000;
+    if (str.includes("K") || str.includes("k")) return parseFloat(str) * 1000;
+    return parseFloat(str) || 0;
+  };
+
+  const top5DramasChartData = [...dramas]
+    .sort((a, b) => parseViewsToNum(b.viewsCount) - parseViewsToNum(a.viewsCount))
+    .slice(0, 5)
+    .map((d, index) => {
+      const val = parseViewsToNum(d.viewsCount);
+      const shortTitle = d.title.length > 16 ? d.title.substring(0, 14) + "..." : d.title;
+      const barColors = ["#ef4444", "#f97316", "#f59e0b", "#a855f7", "#3b82f6"];
+      return {
+        rank: `#${index + 1}`,
+        title: shortTitle,
+        fullTitle: d.title,
+        views: val,
+        formattedViews: d.viewsCount || `${val}`,
+        category: d.category || "Drama",
+        color: barColors[index % barColors.length],
+      };
+    });
+
   // Bulk episode paste state
   const [showBulkPaste, setShowBulkPaste] = useState<boolean>(false);
   const [bulkUrlsText, setBulkUrlsText] = useState<string>("");
@@ -969,7 +995,90 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </div>
 
-          {/* Section 2: Recharts VIP Membership Breakdown & CutLuy Order Chart */}
+          {/* Section 2: Recharts Top 5 Most Viewed Dramas Bar Chart */}
+          <div className="bg-[#15151e] border border-white/15 rounded-3xl p-6 space-y-5 shadow-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <BarChart3 className="w-5 h-5 text-red-500" /> Top 5 Most Viewed Dramas Dashboard
+                </h3>
+                <p className="text-xs text-gray-300 mt-0.5">Real-time viewership metrics ranking top series in catalog</p>
+              </div>
+              <span className="text-xs font-bold text-red-400 bg-red-500/20 px-3 py-1 rounded-xl border border-red-500/30 flex items-center gap-1.5 w-fit">
+                <Sparkles className="w-3.5 h-3.5" /> Total Views: {formattedCatalogViews}
+              </span>
+            </div>
+
+            <div className="h-72 w-full pt-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={top5DramasChartData}
+                  margin={{ top: 10, right: 20, left: 10, bottom: 20 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2a36" />
+                  <XAxis
+                    dataKey="title"
+                    stroke="#a1a1aa"
+                    fontSize={11}
+                    tickLine={false}
+                    interval={0}
+                  />
+                  <YAxis
+                    stroke="#a1a1aa"
+                    fontSize={11}
+                    tickLine={false}
+                    tickFormatter={(val) =>
+                      val >= 1000000
+                        ? `${(val / 1000000).toFixed(1)}M`
+                        : val >= 1000
+                        ? `${(val / 1000).toFixed(0)}k`
+                        : val
+                    }
+                  />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const data = payload[0].payload;
+                        return (
+                          <div className="bg-[#1e1e2d] border border-white/20 p-3 rounded-2xl shadow-xl space-y-1">
+                            <p className="text-xs font-bold text-white">{data.fullTitle}</p>
+                            <p className="text-[11px] text-gray-400">
+                              Category: <span className="text-amber-400 font-semibold">{data.category}</span>
+                            </p>
+                            <p className="text-xs font-black text-red-400">Total Views: {data.formattedViews}</p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Bar dataKey="views" name="Views" radius={[8, 8, 0, 0]}>
+                    {top5DramasChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Top 5 Badges / Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-2 border-t border-white/10">
+              {top5DramasChartData.map((d, i) => (
+                <div key={i} className="p-3 rounded-2xl bg-white/5 border border-white/10 flex flex-col justify-between">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-md text-white" style={{ backgroundColor: d.color }}>
+                      {d.rank}
+                    </span>
+                    <span className="text-[10px] font-semibold text-gray-400 truncate">{d.category}</span>
+                  </div>
+                  <p className="text-xs font-bold text-white truncate mt-2" title={d.fullTitle}>{d.fullTitle}</p>
+                  <p className="text-[11px] font-black text-red-400 mt-0.5">{d.formattedViews} views</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Section 3: Recharts VIP Membership Breakdown & CutLuy Order Chart */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Pie / Donut Chart: VIP Membership Distribution */}
             <div className="bg-[#15151e] border border-white/15 rounded-3xl p-6 space-y-5 shadow-xl flex flex-col justify-between">

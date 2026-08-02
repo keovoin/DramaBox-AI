@@ -23,15 +23,34 @@ export const DramaCard: React.FC<DramaCardProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
 
-  const handleShareClick = (e: React.MouseEvent) => {
+  const handleShareClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
+    const shareUrl = `${window.location.origin}?drama=${encodeURIComponent(drama.id)}`;
+    const shareData = {
+      title: drama.title,
+      text: `Watch "${drama.title}" on DramaHub!`,
+      url: shareUrl,
+    };
+
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch (err: any) {
+        if (err.name === "AbortError") return;
+      }
+    }
+
     if (onShare) {
       onShare(e, drama);
     } else {
-      const shareUrl = `${window.location.origin}?drama=${encodeURIComponent(drama.id)}`;
-      navigator.clipboard.writeText(shareUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error("Clipboard write failed:", err);
+      }
     }
   };
 
