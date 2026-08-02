@@ -28,6 +28,7 @@ import {
   Lock, 
   Unlock, 
   Link as LinkIcon, 
+  Upload,
   Layers, 
   ListPlus,
   Tv,
@@ -474,6 +475,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [epDuration, setEpDuration] = useState<string>("1:45");
   const [epIsVip, setEpIsVip] = useState<boolean>(false);
 
+  // File upload reader helper
+  const handleFileUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    setter: (val: string) => void
+  ) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          setter(event.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const selectedDrama = dramas.find((d) => d.id === selectedDramaId) || dramas[0];
 
   const filteredDramas = dramas.filter((d) =>
@@ -686,12 +704,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   return (
     <div className="w-full space-y-8 animate-fadeIn">
       {/* Header Bar */}
-      <div className="bg-gradient-to-r from-red-950/60 via-[#161616] to-[#121212] p-6 rounded-3xl border border-red-500/20 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-gradient-to-r from-red-950/60 via-[#161616] to-[#121212] p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-red-500/20 shadow-xl flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 text-red-500 font-bold text-xs uppercase tracking-widest mb-1">
             <Tv className="w-4 h-4" /> Admin Media & Gateway Portal
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
             Admin Management Console
           </h1>
           <p className="text-xs text-gray-400 mt-1 max-w-xl">
@@ -700,65 +718,65 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         </div>
 
         {/* Tab Selector & Actions */}
-        <div className="flex items-center gap-3">
-          <div className="flex p-1 bg-[#181818] border border-white/10 rounded-2xl">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full xl:w-auto">
+          <div className="flex p-1 bg-[#181818] border border-white/10 rounded-2xl overflow-x-auto custom-scrollbar no-scrollbar whitespace-nowrap max-w-full">
             <button
               type="button"
               onClick={() => setActiveTab("analytics")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              className={`shrink-0 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
                 activeTab === "analytics"
                   ? "bg-red-600 text-white shadow-md shadow-red-900/30"
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              <BarChart3 className="w-4 h-4" />
-              <span>Analytics Dashboard</span>
+              <BarChart3 className="w-4 h-4 shrink-0" />
+              <span>Analytics</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab("catalog")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              className={`shrink-0 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
                 activeTab === "catalog"
                   ? "bg-red-600 text-white shadow-md shadow-red-900/30"
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              <Film className="w-4 h-4" />
+              <Film className="w-4 h-4 shrink-0" />
               <span>Media Catalog</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab("cutluy")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              className={`shrink-0 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
                 activeTab === "cutluy"
                   ? "bg-emerald-600 text-white shadow-md shadow-emerald-900/30"
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              <CreditCard className="w-4 h-4" />
-              <span>Cutluy Payment Gateway</span>
+              <CreditCard className="w-4 h-4 shrink-0" />
+              <span>Cutluy Gateway</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab("users")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+              className={`shrink-0 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
                 activeTab === "users"
                   ? "bg-blue-600 text-white shadow-md shadow-blue-900/30"
                   : "text-gray-400 hover:text-white"
               }`}
             >
-              <Users className="w-4 h-4" />
-              <span>User Accounts ({currentUsersList.length})</span>
+              <Users className="w-4 h-4 shrink-0" />
+              <span>Users ({currentUsersList.length})</span>
             </button>
           </div>
 
           {activeTab === "catalog" && (
             <button
               onClick={() => setShowCreateModal(true)}
-              className="px-5 py-3 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-900/40 flex items-center gap-2 transition-transform active:scale-95 cursor-pointer"
+              className="shrink-0 px-4 sm:px-5 py-2.5 sm:py-3 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-900/40 flex items-center justify-center gap-2 transition-transform active:scale-95 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Post New Series</span>
@@ -771,7 +789,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       {activeTab === "analytics" && (
         <div className="space-y-6 animate-fadeIn">
           {/* Admin VIP Grant & Access Permission Console */}
-          <div className="bg-gradient-to-r from-[#181824] via-[#1c1c2b] to-[#181824] border border-amber-500/30 rounded-3xl p-6 space-y-5 shadow-2xl relative overflow-hidden">
+          <div className="bg-gradient-to-r from-[#181824] via-[#1c1c2b] to-[#181824] border border-amber-500/30 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-5 shadow-2xl relative overflow-hidden">
             <div className="absolute -right-10 -top-10 w-40 h-40 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
             
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
@@ -789,8 +807,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
 
             {/* VIP Controller Form */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
-              <div className="lg:col-span-5 space-y-1.5">
+            <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-end">
+              <div className="xl:col-span-5 space-y-1.5">
                 <label className="text-xs font-bold text-gray-200 block">
                   Target User Account (Email or Phone):
                 </label>
@@ -807,11 +825,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
 
               {/* Quick Action VIP Buttons */}
-              <div className="lg:col-span-7 flex flex-wrap items-center gap-2">
+              <div className="xl:col-span-7 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => handleAdminGrantVip(7, "Weekly VIP")}
-                  className="px-3.5 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-md"
+                  className="grow sm:grow-0 px-3.5 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-md"
                 >
                   <Crown className="w-3.5 h-3.5 text-amber-400" />
                   <span>Grant Weekly (7 Days)</span>
@@ -820,7 +838,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleAdminGrantVip(30, "Monthly VIP")}
-                  className="px-3.5 py-2.5 rounded-xl bg-red-600/30 hover:bg-red-600/40 border border-red-500/50 text-red-200 font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-md"
+                  className="grow sm:grow-0 px-3.5 py-2.5 rounded-xl bg-red-600/30 hover:bg-red-600/40 border border-red-500/50 text-red-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-md"
                 >
                   <Award className="w-3.5 h-3.5 text-red-400" />
                   <span>Grant Monthly (30 Days)</span>
@@ -829,7 +847,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleAdminGrantVip(365, "Yearly VIP")}
-                  className="px-3.5 py-2.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-500/50 text-emerald-200 font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-md"
+                  className="grow sm:grow-0 px-3.5 py-2.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 border border-emerald-500/50 text-emerald-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-md"
                 >
                   <Zap className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Grant Yearly (365 Days)</span>
@@ -838,7 +856,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleAdminGrantVip(36500, "Lifetime VIP")}
-                  className="px-3.5 py-2.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/40 border border-purple-500/50 text-purple-200 font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-md"
+                  className="grow sm:grow-0 px-3.5 py-2.5 rounded-xl bg-purple-600/30 hover:bg-purple-600/40 border border-purple-500/50 text-purple-200 font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer shadow-md"
                 >
                   <Crown className="w-3.5 h-3.5 text-purple-400" />
                   <span>Lifetime VIP</span>
@@ -847,7 +865,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 <button
                   type="button"
                   onClick={handleAdminRevokeVip}
-                  className="px-3.5 py-2.5 rounded-xl bg-gray-800 hover:bg-red-950 border border-red-500/30 text-gray-300 hover:text-red-300 font-bold text-xs flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer"
+                  className="grow sm:grow-0 px-3.5 py-2.5 rounded-xl bg-gray-800 hover:bg-red-950 border border-red-500/30 text-gray-300 hover:text-red-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-95 cursor-pointer"
                 >
                   <XCircle className="w-3.5 h-3.5" />
                   <span>Revoke VIP</span>
@@ -872,9 +890,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           </div>
 
           {/* Top Metric Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {/* 1. Active User Account */}
-            <div className="bg-[#15151e] border border-white/15 rounded-3xl p-5 space-y-3 relative overflow-hidden shadow-xl">
+            <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-5 space-y-3 relative overflow-hidden shadow-xl">
               <div className="flex items-center justify-between">
                 <div className="w-10 h-10 rounded-2xl bg-blue-500/20 text-blue-400 flex items-center justify-center border border-blue-500/30">
                   <Users className="w-5 h-5" />
@@ -885,7 +903,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
               <div>
                 <p className="text-xs font-bold text-gray-300">Current Logged-in User</p>
-                <h3 className="text-lg font-black text-white mt-1 truncate">{user?.name || "Guest Account"}</h3>
+                <h3 className="text-base sm:text-lg font-black text-white mt-1 truncate">{user?.name || "Guest Account"}</h3>
               </div>
               <p className="text-xs text-gray-400 truncate">
                 {user?.email || "No account logged in"}
@@ -893,7 +911,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
 
             {/* 2. User VIP Status */}
-            <div className="bg-[#15151e] border border-white/15 rounded-3xl p-5 space-y-3 relative overflow-hidden shadow-xl">
+            <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-5 space-y-3 relative overflow-hidden shadow-xl">
               <div className="flex items-center justify-between">
                 <div className="w-10 h-10 rounded-2xl bg-purple-500/20 text-purple-400 flex items-center justify-center border border-purple-500/30">
                   <Crown className="w-5 h-5" />
@@ -904,7 +922,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
               <div>
                 <p className="text-xs font-bold text-gray-300">Account Subscription</p>
-                <h3 className="text-2xl font-black text-white mt-1">{user?.vipPlanName || "Free Tier"}</h3>
+                <h3 className="text-xl sm:text-2xl font-black text-white mt-1">{user?.vipPlanName || "Free Tier"}</h3>
               </div>
               <p className="text-xs text-gray-400">
                 {user?.isVip ? `Expiry: ${user.vipExpiryDate || 'Active'}` : 'Upgrade available via CutLuy KHQR'}
@@ -912,7 +930,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
 
             {/* 3. Catalog Total Streams & Watch Activity */}
-            <div className="bg-[#15151e] border border-white/15 rounded-3xl p-5 space-y-3 relative overflow-hidden shadow-xl">
+            <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-5 space-y-3 relative overflow-hidden shadow-xl">
               <div className="flex items-center justify-between">
                 <div className="w-10 h-10 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
                   <Eye className="w-5 h-5" />
@@ -923,7 +941,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
               <div>
                 <p className="text-xs font-bold text-gray-300">Watch History Activity</p>
-                <h3 className="text-2xl font-black text-white mt-1">{userWatchHistoryCount} <span className="text-xs text-gray-400 font-normal">episodes</span></h3>
+                <h3 className="text-xl sm:text-2xl font-black text-white mt-1">{userWatchHistoryCount} <span className="text-xs text-gray-400 font-normal">episodes</span></h3>
               </div>
               <p className="text-xs text-gray-400">
                 Across {dramas.length} series in catalog
@@ -931,7 +949,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
 
             {/* 4. Real CutLuy Gateway Revenue */}
-            <div className="bg-[#15151e] border border-white/15 rounded-3xl p-5 space-y-3 relative overflow-hidden shadow-xl">
+            <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-5 space-y-3 relative overflow-hidden shadow-xl">
               <div className="flex items-center justify-between">
                 <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
                   <CreditCard className="w-5 h-5" />
@@ -942,7 +960,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
               <div>
                 <p className="text-xs font-bold text-gray-300">Real CutLuy Revenue</p>
-                <h3 className="text-2xl font-black text-emerald-400 mt-1">${totalRevenue.toFixed(2)}</h3>
+                <h3 className="text-xl sm:text-2xl font-black text-emerald-400 mt-1">${totalRevenue.toFixed(2)}</h3>
               </div>
               <p className="text-xs text-gray-400">
                 Discounts applied: ${totalSavingsFromDiscounts.toFixed(2)}
@@ -951,7 +969,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           </div>
 
           {/* Chart Section 1: User Growth & Streaming Session Trend */}
-          <div className="bg-[#15151e] border border-white/15 rounded-3xl p-6 space-y-4 shadow-xl">
+          <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 shadow-xl min-w-0">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
               <div>
                 <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -969,9 +987,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
             </div>
 
-            <div className="h-72 w-full pt-2">
+            <div className="h-60 sm:h-72 w-full pt-2 min-w-0">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={userActivityTrend} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <AreaChart data={userActivityTrend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorDau" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#a855f7" stopOpacity={0.5}/>
@@ -983,8 +1001,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2a36" />
-                  <XAxis dataKey="day" stroke="#a1a1aa" fontSize={11} tickLine={false} />
-                  <YAxis stroke="#a1a1aa" fontSize={11} tickLine={false} allowDecimals={false} />
+                  <XAxis dataKey="day" stroke="#a1a1aa" fontSize={10} tickLine={false} />
+                  <YAxis stroke="#a1a1aa" fontSize={10} tickLine={false} allowDecimals={false} />
                   <Tooltip 
                     contentStyle={{ backgroundColor: "#1e1e2d", borderColor: "#3f3f46", borderRadius: "12px", color: "#ffffff", fontSize: "12px", fontWeight: "bold" }} 
                   />
@@ -996,7 +1014,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           </div>
 
           {/* Section 2: Recharts Top 5 Most Viewed Dramas Bar Chart */}
-          <div className="bg-[#15151e] border border-white/15 rounded-3xl p-6 space-y-5 shadow-xl">
+          <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-5 shadow-xl min-w-0">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
               <div>
                 <h3 className="text-base font-bold text-white flex items-center gap-2">
@@ -1009,23 +1027,23 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </span>
             </div>
 
-            <div className="h-72 w-full pt-2">
+            <div className="h-60 sm:h-72 w-full pt-2 min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={top5DramasChartData}
-                  margin={{ top: 10, right: 20, left: 10, bottom: 20 }}
+                  margin={{ top: 10, right: 10, left: -20, bottom: 20 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2a36" />
                   <XAxis
                     dataKey="title"
                     stroke="#a1a1aa"
-                    fontSize={11}
+                    fontSize={10}
                     tickLine={false}
                     interval={0}
                   />
                   <YAxis
                     stroke="#a1a1aa"
-                    fontSize={11}
+                    fontSize={10}
                     tickLine={false}
                     tickFormatter={(val) =>
                       val >= 1000000
@@ -1062,9 +1080,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
 
             {/* Top 5 Badges / Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-2 border-t border-white/10">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5 pt-2 border-t border-white/10">
               {top5DramasChartData.map((d, i) => (
-                <div key={i} className="p-3 rounded-2xl bg-white/5 border border-white/10 flex flex-col justify-between">
+                <div key={i} className="p-2.5 sm:p-3 rounded-2xl bg-white/5 border border-white/10 flex flex-col justify-between">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-[10px] font-black px-2 py-0.5 rounded-md text-white" style={{ backgroundColor: d.color }}>
                       {d.rank}
@@ -1776,9 +1794,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
       {/* Tab Content 2: Media Catalog */}
       {activeTab === "catalog" && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
         {/* Left Column: Drama Catalog Selector (4 cols) */}
-        <div className="lg:col-span-4 bg-[#121212] border border-white/5 rounded-3xl p-5 space-y-4 h-[380px] lg:h-[750px] flex flex-col">
+        <div className="lg:col-span-4 bg-[#121212] border border-white/5 rounded-2xl sm:rounded-3xl p-4 sm:p-5 space-y-4 max-h-[380px] sm:max-h-[450px] lg:max-h-none lg:h-[750px] flex flex-col">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <Film className="w-4 h-4 text-red-500" />
@@ -1853,22 +1871,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         </div>
 
         {/* Right Column: Selected Series Episodes & Stream Editor (8 cols) */}
-        <div className="lg:col-span-8 bg-[#121212] border border-white/5 rounded-3xl p-6 space-y-6 flex flex-col">
+        <div className="lg:col-span-8 bg-[#121212] border border-white/5 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 sm:space-y-6 flex flex-col">
           {selectedDrama ? (
             <>
               {/* Selected Drama Info Bar */}
-              <div className="bg-[#161616] border border-white/5 p-5 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
+              <div className="bg-[#161616] border border-white/5 p-4 sm:p-5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3 sm:gap-4">
                   <img
                     src={selectedDrama.posterUrl}
                     alt={selectedDrama.title}
-                    className="w-16 h-20 rounded-xl object-cover border border-white/10"
+                    className="w-14 h-18 sm:w-16 sm:h-20 rounded-xl object-cover border border-white/10 shrink-0"
                   />
-                  <div>
+                  <div className="min-w-0">
                     <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider bg-red-500/10 px-2 py-0.5 rounded">
                       {selectedDrama.category}
                     </span>
-                    <h2 className="text-lg font-black text-white mt-1">
+                    <h2 className="text-base sm:text-lg font-black text-white mt-1 truncate">
                       {selectedDrama.title}
                     </h2>
                     <p className="text-xs text-gray-400 line-clamp-1 mt-0.5 max-w-lg">
@@ -1877,20 +1895,30 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   <button
+                    type="button"
                     onClick={() => onPreviewDrama(selectedDrama, 1)}
-                    className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                    className="grow sm:grow-0 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <Play className="w-3.5 h-3.5 text-red-500 fill-red-500" />
                     <span>Test Play</span>
                   </button>
                   <button
+                    type="button"
                     onClick={() => setEditingDrama(selectedDrama)}
-                    className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                    className="grow sm:grow-0 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <Edit3 className="w-3.5 h-3.5" />
                     <span>Edit Series</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteDrama(selectedDrama.id, selectedDrama.title)}
+                    className="grow sm:grow-0 px-3 py-2 rounded-xl bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer border border-red-500/30"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Series</span>
                   </button>
                 </div>
               </div>
@@ -1926,9 +1954,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
 
               {/* Episode List Table */}
-              <div className="flex-1 overflow-y-auto max-h-[500px] border border-white/5 rounded-2xl bg-[#161616] custom-scrollbar">
+              <div className="flex-1 overflow-x-auto overflow-y-auto max-h-[500px] border border-white/5 rounded-2xl bg-[#161616] custom-scrollbar">
                 {selectedDrama.episodes.length > 0 ? (
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full text-left text-xs min-w-[550px]">
                     <thead className="bg-[#1f1f1f] text-gray-400 font-bold uppercase text-[10px] tracking-wider sticky top-0 z-10 border-b border-white/5">
                       <tr>
                         <th className="px-4 py-3">Ep #</th>
@@ -2079,37 +2107,78 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-gray-400 mb-1">Default Video Stream Link (.mp4 / CDN URL) *</label>
+                <label className="block font-bold text-gray-400 mb-1">Default Video Stream Link or Upload File *</label>
                 <input
-                  type="url"
+                  type="text"
                   required
                   value={newVideoUrl}
                   onChange={(e) => setNewVideoUrl(e.target.value)}
-                  placeholder="https://hwztakavideo.dramaboxdb.com/..."
+                  placeholder="https://... or choose file below"
                   className="w-full bg-[#181818] border border-white/10 rounded-xl px-3.5 py-2.5 text-white font-mono text-[11px] focus:outline-none focus:border-red-500"
                 />
+                <div className="mt-1.5 flex items-center justify-between">
+                  <label className="bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 transition-colors border border-white/10">
+                    <Upload className="w-3.5 h-3.5 text-red-400" />
+                    Select Video File (MP4/MOV)
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, setNewVideoUrl)}
+                    />
+                  </label>
+                  {newVideoUrl.startsWith("data:video") && (
+                    <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                      <Check className="w-3 h-3" /> File Selected
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold text-gray-400 mb-1">Poster Image URL</label>
+                  <label className="block font-bold text-gray-400 mb-1">Poster Image</label>
                   <input
-                    type="url"
+                    type="text"
                     value={newPosterUrl}
                     onChange={(e) => setNewPosterUrl(e.target.value)}
-                    placeholder="https://images.unsplash.com/..."
+                    placeholder="https://..."
                     className="w-full bg-[#181818] border border-white/10 rounded-xl px-3 py-2 text-white text-[11px] focus:outline-none focus:border-red-500"
                   />
+                  <div className="mt-1">
+                    <label className="bg-white/10 hover:bg-white/20 text-gray-300 text-[10px] font-bold px-2 py-1 rounded cursor-pointer inline-flex items-center gap-1 border border-white/10">
+                      <Upload className="w-3 h-3 text-red-400" />
+                      Upload Poster
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => handleFileUpload(e, setNewPosterUrl)}
+                      />
+                    </label>
+                  </div>
                 </div>
                 <div>
-                  <label className="block font-bold text-gray-400 mb-1">Banner Image URL</label>
+                  <label className="block font-bold text-gray-400 mb-1">Banner Image</label>
                   <input
-                    type="url"
+                    type="text"
                     value={newBannerUrl}
                     onChange={(e) => setNewBannerUrl(e.target.value)}
-                    placeholder="https://images.unsplash.com/..."
+                    placeholder="https://..."
                     className="w-full bg-[#181818] border border-white/10 rounded-xl px-3 py-2 text-white text-[11px] focus:outline-none focus:border-red-500"
                   />
+                  <div className="mt-1">
+                    <label className="bg-white/10 hover:bg-white/20 text-gray-300 text-[10px] font-bold px-2 py-1 rounded cursor-pointer inline-flex items-center gap-1 border border-white/10">
+                      <Upload className="w-3 h-3 text-red-400" />
+                      Upload Banner
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => handleFileUpload(e, setNewBannerUrl)}
+                      />
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -2162,15 +2231,32 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
 
               <div>
-                <label className="block font-bold text-gray-400 mb-1">Direct Video URL (.mp4 / CDN) *</label>
+                <label className="block font-bold text-gray-400 mb-1">Direct Video URL or Upload File *</label>
                 <input
-                  type="url"
+                  type="text"
                   required
                   value={epVideoUrl}
                   onChange={(e) => setEpVideoUrl(e.target.value)}
-                  placeholder="https://hwztakavideo.dramaboxdb.com/..."
+                  placeholder="https://... or choose video file below"
                   className="w-full bg-[#181818] border border-white/10 rounded-xl px-3.5 py-2.5 text-white font-mono text-[11px] focus:outline-none focus:border-red-500"
                 />
+                <div className="mt-1.5 flex items-center justify-between">
+                  <label className="bg-white/10 hover:bg-white/20 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 transition-colors border border-white/10">
+                    <Upload className="w-3.5 h-3.5 text-red-400" />
+                    Select Video File (MP4/MOV)
+                    <input
+                      type="file"
+                      accept="video/*"
+                      className="hidden"
+                      onChange={(e) => handleFileUpload(e, setEpVideoUrl)}
+                    />
+                  </label>
+                  {epVideoUrl.startsWith("data:video") && (
+                    <span className="text-[10px] text-emerald-400 font-semibold flex items-center gap-1">
+                      <Check className="w-3 h-3" /> Video Attached
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="flex items-center justify-between bg-[#181818] p-3 rounded-xl border border-white/5">

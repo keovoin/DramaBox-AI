@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { 
   X, Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, 
   Maximize, Heart, Share2, Star, Lock, Smartphone, Monitor, 
-  Settings2, RefreshCw, MessageCircle, Send, Check, Bookmark
+  Settings2, RefreshCw, MessageCircle, Send, Check, Bookmark, Sparkles
 } from "lucide-react";
 import { Drama, Episode } from "../types";
 
@@ -63,6 +63,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
     return [];
   });
   const [newComment, setNewComment] = useState<string>("");
+  const [videoError, setVideoError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -77,10 +78,26 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const currentEpisode: Episode = drama.episodes.find((ep) => ep.number === currentEpNum) || drama.episodes[0];
   const isLocked = currentEpisode.isVip && !isVipMember;
 
+  // Reset error when episode or stream changes
+  useEffect(() => {
+    setVideoError(null);
+  }, [currentEpNum, useProxyStream]);
+
   // Video URL generator (direct vs proxy)
   const effectiveVideoUrl = useProxyStream
     ? `/api/proxy-stream?url=${encodeURIComponent(currentEpisode.videoUrl)}`
     : currentEpisode.videoUrl;
+
+  const handleVideoError = () => {
+    console.warn("Video failed to load directly:", currentEpisode.videoUrl);
+    if (!useProxyStream && currentEpisode.videoUrl.startsWith("http")) {
+      setUseProxyStream(true);
+      setVideoError("Direct stream unavailable. Switched to proxy stream mode.");
+      setTimeout(() => setVideoError(null), 4000);
+    } else {
+      setVideoError("Unable to play video stream. Please check video URL or try another episode.");
+    }
+  };
 
   useEffect(() => {
     if (videoRef.current) {
@@ -353,6 +370,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 onLoadedMetadata={handleLoadedMetadata}
                 onTimeUpdate={handleTimeUpdate}
                 onEnded={handleVideoEnded}
+                onError={handleVideoError}
                 onClick={handlePlayPause}
                 onContextMenu={(e) => e.preventDefault()}
                 onDragStart={(e) => e.preventDefault()}
@@ -360,8 +378,37 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 disablePictureInPicture
                 autoPlay
                 playsInline
+                // @ts-ignore
+                webkit-playsinline="true"
                 className="w-full h-full object-contain cursor-pointer select-none"
               />
+
+              {/* Center Play Button Overlay for Touch & Mobile */}
+              {!isPlaying && !isLocked && (
+                <button
+                  onClick={handlePlayPause}
+                  className="absolute inset-0 m-auto w-16 h-16 rounded-full bg-red-600/90 hover:bg-red-500 text-white flex items-center justify-center shadow-2xl backdrop-blur-md z-30 transition-transform active:scale-95 cursor-pointer border border-white/20"
+                  aria-label="Play Episode"
+                >
+                  <Play className="w-8 h-8 ml-1 fill-current" />
+                </button>
+              )}
+
+              {/* Video Error Notice Overlay */}
+              {videoError && (
+                <div className="absolute top-4 left-4 right-4 bg-red-950/90 border border-red-500/50 text-white px-4 py-2.5 rounded-xl shadow-2xl z-40 flex items-center justify-between gap-2 text-xs backdrop-blur-md animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span className="font-medium">{videoError}</span>
+                  </div>
+                  <button
+                    onClick={() => setUseProxyStream(!useProxyStream)}
+                    className="bg-white/10 hover:bg-white/20 text-xs px-2.5 py-1 rounded-lg font-bold shrink-0 text-amber-300 border border-amber-500/30"
+                  >
+                    {useProxyStream ? "Use Direct" : "Try Proxy"}
+                  </button>
+                </div>
+              )}
 
               {/* Persistent Bottom Progress Bar */}
               <div className="absolute bottom-0 left-0 right-0 h-1.5 bg-white/20 z-30 pointer-events-none">

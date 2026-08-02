@@ -93,8 +93,10 @@ export async function syncDramaToFirestore(drama: Drama): Promise<void> {
   if (!drama.id) return;
   const dramaRef = doc(db, "dramas", drama.id);
   try {
+    // Sanitize object to strip undefined properties that break Firestore setDoc
+    const cleanDrama = JSON.parse(JSON.stringify(drama));
     await setDoc(dramaRef, {
-      ...drama,
+      ...cleanDrama,
       updatedAt: new Date().toISOString()
     }, { merge: true });
   } catch (error) {
@@ -120,9 +122,8 @@ export function subscribeToDramasFromFirestore(onUpdate: (dramas: Drama[]) => vo
     snapshot.forEach((docSnap) => {
       items.push(docSnap.data() as Drama);
     });
-    if (items.length > 0) {
-      onUpdate(items);
-    }
+    // Always dispatch snapshot items (even if empty array) so App can sync default catalog
+    onUpdate(items);
   }, (error) => {
     console.error("Firestore dramas subscription error:", error);
   });

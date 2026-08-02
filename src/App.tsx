@@ -12,7 +12,7 @@ import { CutluyPaymentModal } from "./components/CutluyPaymentModal";
 import { ContinueWatching } from "./components/ContinueWatching";
 import { DRAMA_CATALOG } from "./data/dramas";
 import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord } from "./types";
-import { syncUserProfileToFirestore, syncDramaToFirestore, deleteDramaFromFirestore, subscribeToDramasFromFirestore } from "./lib/firebase";
+import { syncUserProfileToFirestore } from "./lib/firebase";
 import { Flame, Sparkles, Star, Plus, Film, Compass, Heart, History, RefreshCw, Shield, Bookmark, Check, Mail } from "lucide-react";
 
 export default function App() {
@@ -172,28 +172,6 @@ export default function App() {
       console.error("Failed to save catalog", err);
     }
   }, [dramas]);
-
-  // Subscribe to Realtime Firestore Dramas Catalog so all users see uploaded movies across devices
-  useEffect(() => {
-    const unsubscribe = subscribeToDramasFromFirestore((remoteDramas) => {
-      if (remoteDramas && remoteDramas.length > 0) {
-        setDramas((prevLocal) => {
-          // Merge local uploaded dramas that might not be in remote yet
-          const remoteIds = new Set(remoteDramas.map((d) => d.id));
-          const localOnly = prevLocal.filter((d) => !remoteIds.has(d.id));
-          if (localOnly.length > 0) {
-            localOnly.forEach((d) => syncDramaToFirestore(d));
-            return [...localOnly, ...remoteDramas];
-          }
-          return remoteDramas;
-        });
-      } else {
-        // If Firestore collection is empty, publish current dramas to Firestore
-        dramas.forEach((d) => syncDramaToFirestore(d));
-      }
-    });
-    return () => unsubscribe();
-  }, []);
   
   // Favorites Local Storage
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -418,24 +396,10 @@ export default function App() {
   };
 
   const handleUpdateDramas = (updatedDramas: Drama[]) => {
-    // Sync each drama to Firestore so all production users see additions/updates
-    updatedDramas.forEach((d) => {
-      syncDramaToFirestore(d);
-    });
-
-    // Detect deleted dramas and remove from Firestore
-    const currentIds = new Set(updatedDramas.map((d) => d.id));
-    dramas.forEach((d) => {
-      if (!currentIds.has(d.id)) {
-        deleteDramaFromFirestore(d.id);
-      }
-    });
-
     setDramas(updatedDramas);
   };
 
   const handleAddCustomDrama = (newDrama: Drama) => {
-    syncDramaToFirestore(newDrama);
     setDramas((prev) => [newDrama, ...prev]);
     setActivePlayerDrama(newDrama);
   };
