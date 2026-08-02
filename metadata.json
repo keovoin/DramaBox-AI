@@ -1,0 +1,6 @@
+{
+  "name": "DramaHub",
+  "description": "Short-drama streaming platform with vertical video player, episode navigator, search, and custom streaming server configuration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
