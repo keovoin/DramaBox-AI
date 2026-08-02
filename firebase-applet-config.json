@@ -1,0 +1,12 @@
+{
+  "projectId": "dramabox-ai",
+  "appId": "1:881518398628:web:8c97282a917c2a2d076a31",
+  "apiKey": "AIzaSyAj1EPmrpLK8bgobPmtHY1e50to1_Jym6g",
+  "authDomain": "dramabox-ai.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-dramahub-19e8f629-73b9-40e9-bfc6-37a8badaab29",
+  "storageBucket": "dramabox-ai.firebasestorage.app",
+  "messagingSenderId": "881518398628",
+  "measurementId": "",
+  "oAuthClientId": "881518398628-c51119v8374q5hppnvv9fbnlrlct7tc3.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
+}

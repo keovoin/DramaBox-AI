@@ -13,6 +13,133 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Google OAuth Configuration & Routes
+const getGoogleOAuthConfig = (req: express.Request) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID || process.env.OAUTH_CLIENT_ID || "";
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || "";
+  const host = req.get("host") || "localhost:3000";
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
+  const redirectUri = `${protocol}://${host}/api/auth/google/callback`;
+  return { clientId, clientSecret, redirectUri };
+};
+
+app.get("/api/auth/google/config", (req, res) => {
+  const { clientId, redirectUri } = getGoogleOAuthConfig(req);
+  res.json({ configured: Boolean(clientId), clientId, redirectUri });
+});
+
+app.get("/api/auth/google/url", (req, res) => {
+  const { clientId, redirectUri } = getGoogleOAuthConfig(req);
+  if (!clientId) {
+    return res.status(400).json({
+      error: "missing_client_id",
+      message: "GOOGLE_CLIENT_ID is not configured in server environment variables."
+    });
+  }
+  const scope = encodeURIComponent("https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile");
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${scope}&access_type=offline&prompt=select_account`;
+  res.json({ url: authUrl, redirectUri, clientId });
+});
+
+app.get("/api/auth/google/callback", async (req, res) => {
+  const code = req.query.code as string;
+  const error = req.query.error as string;
+
+  if (error || !code) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Google Sign-In Failed</title></head>
+        <body style="font-family:sans-serif; background:#141414; color:#fff; text-align:center; padding:50px;">
+          <h2 style="color:#ef4444;">Google Sign-In Cancelled or Failed</h2>
+          <p>${error || "No authorization code received"}</p>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_ERROR', error: '${error || "cancelled"}' }, '*');
+              setTimeout(() => window.close(), 1500);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  }
+
+  const { clientId, clientSecret, redirectUri } = getGoogleOAuthConfig(req);
+
+  try {
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: "authorization_code"
+      })
+    });
+
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.access_token) {
+      throw new Error(tokenData.error_description || tokenData.error || "Failed to exchange Google authorization code for token");
+    }
+
+    const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` }
+    });
+
+    const userInfo = await userInfoRes.json();
+    if (!userInfo || !userInfo.email) {
+      throw new Error("Failed to fetch Google account profile");
+    }
+
+    const userPayload = JSON.stringify({
+      id: `usr_gmail_${userInfo.id || Date.now()}`,
+      name: userInfo.name || userInfo.email.split("@")[0],
+      email: userInfo.email,
+      avatarUrl: userInfo.picture || "https://lh3.googleusercontent.com/a/default-user=s96-c",
+      authMethod: "gmail",
+      verified: userInfo.verified_email ?? true
+    });
+
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Google Sign-In Successful</title></head>
+        <body style="font-family:sans-serif; background:#141414; color:#fff; text-align:center; padding:50px;">
+          <h2 style="color:#22c55e;">Google Sign-In Successful!</h2>
+          <p style="color:#aaa;">Welcome, <strong>${userInfo.name || userInfo.email}</strong></p>
+          <p style="font-size:12px; color:#666;">Completing sign in...</p>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', user: ${userPayload} }, '*');
+              setTimeout(() => window.close(), 500);
+            } else {
+              window.location.href = '/';
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  } catch (err: any) {
+    return res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head><title>Google Sign-In Error</title></head>
+        <body style="font-family:sans-serif; background:#141414; color:#fff; text-align:center; padding:50px;">
+          <h2 style="color:#ef4444;">Google Sign-In Error</h2>
+          <p>${err.message}</p>
+          <script>
+            if (window.opener) {
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_ERROR', error: ${JSON.stringify(err.message)} }, '*');
+            }
+          </script>
+        </body>
+      </html>
+    `);
+  }
+});
+
 // Proxy video or stream requests to bypass CORS restrictions
 app.get("/api/proxy-stream", async (req, res) => {
   const videoUrl = req.query.url as string;

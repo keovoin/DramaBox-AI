@@ -7,10 +7,12 @@ import { VideoPlayerModal } from "./components/VideoPlayerModal";
 import { UpgradeModal } from "./components/UpgradeModal";
 import { AdminPortal } from "./components/AdminPortal";
 import { AuthModal } from "./components/AuthModal";
+import { EditProfileModal } from "./components/EditProfileModal";
 import { CutluyPaymentModal } from "./components/CutluyPaymentModal";
 import { ContinueWatching } from "./components/ContinueWatching";
 import { DRAMA_CATALOG } from "./data/dramas";
 import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord } from "./types";
+import { syncUserProfileToFirestore } from "./lib/firebase";
 import { Flame, Sparkles, Star, Plus, Film, Compass, Heart, History, RefreshCw, Shield, Bookmark, Check, Mail } from "lucide-react";
 
 export default function App() {
@@ -216,7 +218,17 @@ export default function App() {
   const [playerInitialSeek, setPlayerInitialSeek] = useState<number>(0);
   const [showUpgradeModal, setShowUpgradeModal] = useState<boolean>(false);
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [showEditProfileModal, setShowEditProfileModal] = useState<boolean>(false);
   const [showCutluyModal, setShowCutluyModal] = useState<boolean>(false);
+
+  const handleSaveProfile = (updatedProfile: UserProfile) => {
+    setUser(updatedProfile);
+    setUsersList((prev) =>
+      prev.map((u) => (u.id === updatedProfile.id || u.email === updatedProfile.email ? updatedProfile : u))
+    );
+    syncUserProfileToFirestore(updatedProfile);
+    showToast("Profile & Username updated successfully!");
+  };
   const [cutluyPlan, setCutluyPlan] = useState<SubscriptionPlan>({
     id: "plan_monthly",
     name: "Monthly VIP Pass",
@@ -550,6 +562,7 @@ export default function App() {
           onOpenAuth={() => setShowAuthModal(true)}
           onLogout={() => setUser(null)}
           onOpenUpgrade={() => setShowUpgradeModal(true)}
+          onOpenEditProfile={() => setShowEditProfileModal(true)}
         />
 
         {/* Scrollable View Container */}
@@ -703,15 +716,30 @@ export default function App() {
                     ? "You haven't added any dramas to your favorites list yet."
                     : currentTab === "history"
                     ? "No watch history recorded yet."
-                    : "The drama catalog is currently empty. Open the Admin Portal to post your first original series or bulk paste episode video links!"}
+                    : user?.email === "keovoin@gmail.com"
+                    ? "The drama catalog is currently empty. Open the Admin Portal to post your first original series or bulk paste episode video links!"
+                    : "No drama series found matching your selection."}
                 </p>
                 <div className="flex items-center justify-center gap-3 pt-2">
-                  <button
-                    onClick={() => setCurrentTab("admin")}
-                    className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-900/30 flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Shield className="w-4 h-4" /> Open Admin Portal
-                  </button>
+                  {user?.email === "keovoin@gmail.com" ? (
+                    <button
+                      onClick={() => setCurrentTab("admin")}
+                      className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-900/30 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Shield className="w-4 h-4" /> Open Admin Portal
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setCurrentTab("home");
+                        setSearchQuery("");
+                        setSelectedCategory("All");
+                      }}
+                      className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-900/30 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Compass className="w-4 h-4" /> Browse Catalog
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -753,6 +781,16 @@ export default function App() {
           isOpen={showAuthModal}
           onClose={() => setShowAuthModal(false)}
           onLoginSuccess={(loggedUser) => setUser(loggedUser)}
+        />
+      )}
+
+      {/* Edit Profile & Username Modal */}
+      {showEditProfileModal && user && (
+        <EditProfileModal
+          isOpen={showEditProfileModal}
+          onClose={() => setShowEditProfileModal(false)}
+          user={user}
+          onSave={handleSaveProfile}
         />
       )}
 

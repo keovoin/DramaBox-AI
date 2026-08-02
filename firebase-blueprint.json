@@ -1,0 +1,59 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "User profile document stored in Firestore",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 200 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "authMethod": { "type": "string", "maxLength": 20 },
+        "avatarUrl": { "type": "string", "maxLength": 1000 },
+        "isVip": { "type": "boolean" },
+        "vipExpiresAt": { "type": "string", "maxLength": 50 },
+        "coins": { "type": "number" },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "name", "authMethod"]
+    },
+    "UserFavorite": {
+      "title": "User Favorite Drama",
+      "description": "Drama bookmarked or favorited by user",
+      "type": "object",
+      "properties": {
+        "dramaId": { "type": "string", "maxLength": 100 },
+        "addedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["dramaId"]
+    },
+    "WatchHistory": {
+      "title": "Watch History Item",
+      "description": "User watched drama episode history",
+      "type": "object",
+      "properties": {
+        "dramaId": { "type": "string", "maxLength": 100 },
+        "episodeNumber": { "type": "number" },
+        "progressSeconds": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["dramaId", "episodeNumber"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles collection indexed by UID"
+    },
+    "/users/{userId}/favorites/{dramaId}": {
+      "schema": { "$ref": "#/entities/UserFavorite" },
+      "description": "User bookmarked drama series"
+    },
+    "/users/{userId}/history/{historyId}": {
+      "schema": { "$ref": "#/entities/WatchHistory" },
+      "description": "User watching progress history"
+    }
+  }
+}

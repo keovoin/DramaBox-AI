@@ -12,6 +12,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { UserProfile } from "../types";
+import { loginWithFirebaseGoogle } from "../lib/firebase";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -20,8 +21,11 @@ interface AuthModalProps {
 }
 
 const COUNTRY_CODES = [
+  { code: "+855", country: "Cambodia (KHR)", flag: "🇰🇭" },
   { code: "+1", country: "United States / Canada", flag: "🇺🇸" },
   { code: "+84", country: "Vietnam", flag: "🇻🇳" },
+  { code: "+66", country: "Thailand", flag: "🇹🇭" },
+  { code: "+65", country: "Singapore", flag: "🇸🇬" },
   { code: "+44", country: "United Kingdom", flag: "🇬🇧" },
   { code: "+91", country: "India", flag: "🇮🇳" },
   { code: "+86", country: "China", flag: "🇨🇳" },
@@ -38,11 +42,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [authMethod, setAuthMethod] = useState<"gmail" | "phone">("gmail");
 
   // Gmail State
-  const [gmailEmail, setGmailEmail] = useState<string>("keovoin@gmail.com");
-  const [gmailName, setGmailName] = useState<string>("Keo Voin");
+  const [gmailEmail, setGmailEmail] = useState<string>("");
+  const [gmailName, setGmailName] = useState<string>("");
 
   // Phone State
-  const [countryCode, setCountryCode] = useState<string>("+1");
+  const [countryCode, setCountryCode] = useState<string>("+855");
   const [phoneNumber, setPhoneNumber] = useState<string>("");
   const [step, setStep] = useState<"input_phone" | "verify_otp">("input_phone");
   const [otpCode, setOtpCode] = useState<string>("");
@@ -51,7 +55,87 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle Gmail Authentication
+  // Handle Real Google OAuth / Firebase Google Auth
+  const handleGoogleOAuthSignIn = async () => {
+    setIsLoading(true);
+    setNotice("");
+
+    try {
+      // First attempt Firebase Google Auth popup
+      const userProfile = await loginWithFirebaseGoogle();
+      setIsLoading(false);
+      onLoginSuccess(userProfile);
+      onClose();
+    } catch (firebaseErr: any) {
+      console.warn("Firebase Google Auth attempt, trying secondary backend OAuth...", firebaseErr);
+
+      try {
+        const res = await fetch("/api/auth/google/url");
+        const data = await res.json();
+
+        if (!res.ok || !data.url) {
+          throw new Error(data.message || "Google Client ID is initializing.");
+        }
+
+        // Open official Google OAuth popup window
+        const width = 520;
+        const height = 620;
+        const left = window.screenX + (window.innerWidth - width) / 2;
+        const top = window.screenY + (window.innerHeight - height) / 2;
+
+        const popup = window.open(
+          data.url,
+          "GoogleSignInPopup",
+          `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no,toolbar=no`
+        );
+
+        if (!popup || popup.closed) {
+          setNotice("Popup window blocked by browser. Please allow popups or enter your Gmail address below.");
+          setIsLoading(false);
+        }
+      } catch (err: any) {
+        console.warn("Google OAuth trigger error:", err);
+        setNotice(
+          "Google Sign-In ready. If popups are blocked in preview iframe, please enter your Gmail address below to sign in."
+        );
+        setIsLoading(false);
+      }
+    }
+  };
+
+  // Listen for OAuth postMessage callback from backend
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "GOOGLE_AUTH_SUCCESS" && event.data.user) {
+        const googleUser = event.data.user;
+        const isAdmin = googleUser.email.toLowerCase() === "keovoin@gmail.com";
+
+        const userProfile: UserProfile = {
+          id: googleUser.id || `usr_gmail_${Date.now()}`,
+          name: googleUser.name || googleUser.email.split("@")[0],
+          email: googleUser.email,
+          authMethod: "gmail",
+          avatarUrl: googleUser.avatarUrl || "https://lh3.googleusercontent.com/a/default-user=s96-c",
+          isVip: isAdmin,
+          vipExpiresAt: isAdmin ? "2030-12-31" : undefined,
+          coins: 0,
+          createdAt: new Date().toISOString(),
+        };
+
+        setIsLoading(false);
+        onLoginSuccess(userProfile);
+        onClose();
+      } else if (event.data?.type === "GOOGLE_AUTH_ERROR") {
+        setIsLoading(false);
+        setNotice(`Google Authentication error: ${event.data.error || "Login failed"}`);
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [onLoginSuccess, onClose]);
+
+  // Handle Manual Gmail Form Submission
   const handleGmailLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!gmailEmail.trim()) return;
@@ -67,7 +151,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         name: displayName,
         email: gmailEmail.trim(),
         authMethod: "gmail",
-        avatarUrl: `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80`,
+        avatarUrl: `https://lh3.googleusercontent.com/a/default-user=s96-c`,
         isVip: isAdmin,
         vipExpiresAt: isAdmin ? "2030-12-31" : undefined,
         coins: 0,
@@ -213,14 +297,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Gmail Form */}
         {authMethod === "gmail" && (
           <div className="space-y-4">
-            {/* Direct Google OAuth One-Click Button */}
+            {/* Primary Google OAuth Popup Button */}
             <button
               type="button"
-              onClick={handleQuickGoogleSignIn}
+              onClick={handleGoogleOAuthSignIn}
               disabled={isLoading}
-              className="w-full py-3.5 px-4 rounded-2xl bg-white hover:bg-gray-100 text-gray-900 font-bold text-xs flex items-center justify-center gap-3 shadow-lg transition-all active:scale-95 cursor-pointer"
+              className="w-full py-3.5 px-4 rounded-2xl bg-white hover:bg-gray-100 text-gray-900 font-bold text-xs flex items-center justify-center gap-3 shadow-lg shadow-black/40 transition-all active:scale-95 cursor-pointer border border-gray-200"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                 <path
                   fill="#4285F4"
                   d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -238,7 +322,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                 />
               </svg>
-              <span>Continue with Google (keovoin@gmail.com)</span>
+              <span>{isLoading ? "Connecting to Google..." : "Sign In with Google Account"}</span>
             </button>
 
             <div className="flex items-center gap-3 my-2">
@@ -249,8 +333,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
             <form onSubmit={handleGmailLogin} className="space-y-3.5">
               <div>
-                <label className="block text-[11px] font-bold text-gray-400 mb-1">
-                  Gmail Address
+                <label className="block text-xs font-bold text-gray-300 mb-1.5">
+                  Your Gmail Address *
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 absolute left-3.5 top-3.5 text-gray-500" />
@@ -259,15 +343,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     required
                     value={gmailEmail}
                     onChange={(e) => setGmailEmail(e.target.value)}
-                    placeholder="your.email@gmail.com"
-                    className="w-full bg-[#181818] border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500"
+                    placeholder="name@gmail.com"
+                    className="w-full bg-[#181818] border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-gray-400 mb-1">
-                  Display Name
+                <label className="block text-xs font-bold text-gray-300 mb-1.5">
+                  Your Name (Optional)
                 </label>
                 <div className="relative">
                   <User className="w-4 h-4 absolute left-3.5 top-3.5 text-gray-500" />
@@ -276,22 +360,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={gmailName}
                     onChange={(e) => setGmailName(e.target.value)}
                     placeholder="e.g., Keo Voin"
-                    className="w-full bg-[#181818] border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500"
+                    className="w-full bg-[#181818] border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors"
                   />
                 </div>
               </div>
 
               <button
                 type="submit"
-                disabled={isLoading}
-                className="w-full py-3 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs shadow-lg shadow-red-900/40 flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer mt-2"
+                disabled={isLoading || !gmailEmail.trim()}
+                className="w-full py-3 rounded-2xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-red-900/40 flex items-center justify-center gap-2.5 transition-all active:scale-95 cursor-pointer mt-2"
               >
-                <span>{isLoading ? "Signing in..." : "Sign In with Gmail"}</span>
+                <span>{isLoading ? "Signing in..." : "Continue with Gmail Address"}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
           </div>
         )}
+
 
         {/* Phone Form */}
         {authMethod === "phone" && (
@@ -306,11 +391,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     <select
                       value={countryCode}
                       onChange={(e) => setCountryCode(e.target.value)}
-                      className="bg-[#181818] border border-white/10 rounded-2xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-red-500"
+                      className="bg-[#181818] border border-white/10 rounded-2xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-red-500 max-w-[150px]"
                     >
                       {COUNTRY_CODES.map((c) => (
                         <option key={c.code} value={c.code}>
-                          {c.flag} {c.code}
+                          {c.flag} {c.code} ({c.country.split(" ")[0]})
                         </option>
                       ))}
                     </select>

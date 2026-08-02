@@ -10,6 +10,7 @@ interface HeaderProps {
   onOpenAuth: () => void;
   onLogout: () => void;
   onOpenUpgrade: () => void;
+  onOpenEditProfile?: () => void;
   notificationCount?: number;
 }
 
@@ -21,6 +22,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenAuth,
   onLogout,
   onOpenUpgrade,
+  onOpenEditProfile,
   notificationCount = 2,
 }) => {
   const [searchHistory, setSearchHistory] = useState<string[]>(() => {
@@ -274,6 +276,17 @@ export const Header: React.FC<HeaderProps> = ({
                       ))}
                     </div>
                   )}
+                  {/* Edit Profile & Username Option */}
+                  {onOpenEditProfile && (
+                    <button
+                      onClick={onOpenEditProfile}
+                      className="w-full text-left px-3 py-2 rounded-xl hover:bg-white/10 text-gray-200 text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
+                    >
+                      <User className="w-3.5 h-3.5 text-red-400" />
+                      <span>Edit Profile & Name</span>
+                    </button>
+                  )}
+
                   <button
                     onClick={onLogout}
                     className="w-full text-left px-3 py-2 rounded-xl hover:bg-red-500/10 text-red-400 text-xs font-bold flex items-center gap-2 transition-colors cursor-pointer"
