@@ -37,6 +37,7 @@ export const CutluyPaymentModal: React.FC<CutluyPaymentModalProps> = ({
   const [paymentDone, setPaymentDone] = useState<boolean>(false);
 
   const config = getCutluyConfig();
+  const isAdmin = user?.email === "keovoin@gmail.com";
 
   // Auto-poll payment status if an order with paymentId is active
   useEffect(() => {
@@ -76,7 +77,19 @@ export const CutluyPaymentModal: React.FC<CutluyPaymentModalProps> = ({
       setCurrentOrder(order);
     } catch (err: any) {
       console.error("Cutluy order creation error:", err);
-      setErrorMessage(err.message || "Failed to create CutLuy payment. Please check your API key.");
+      if (isAdmin && err.owner_note) {
+        setErrorMessage(`❌ Admin Notice: ${err.owner_note} (Technical details: ${err.message})`);
+      } else if (err.owner_note) {
+        // Normal user only sees the clean message, not the store owner note
+        setErrorMessage(err.message || "The payment gateway is temporarily unconfigured. Please contact support.");
+      } else {
+        const baseMsg = err.message || "Failed to create CutLuy payment.";
+        if (isAdmin) {
+          setErrorMessage(`${baseMsg} Please check your API key under CutLuy Gateway tab.`);
+        } else {
+          setErrorMessage(`${baseMsg} Please try again later or contact support.`);
+        }
+      }
     } finally {
       setIsCreating(false);
     }
@@ -120,12 +133,16 @@ export const CutluyPaymentModal: React.FC<CutluyPaymentModalProps> = ({
 
     // When checking real API payment status and paymentId is present, we only unlock when status === "paid"
     setIsVerifying(false);
-    setErrorMessage("⚠️ Payment status has not been confirmed as 'paid' yet. Please complete payment via Bakong or banking app, or use testing bypass below.");
+    if (isAdmin) {
+      setErrorMessage("⚠️ Payment status has not been confirmed as 'paid' yet. Please complete payment via Bakong or banking app, or use testing bypass below.");
+    } else {
+      setErrorMessage("⚠️ Payment status has not been confirmed as 'paid' yet. Please complete payment via Bakong or banking app.");
+    }
   };
 
   // Manual bypass/force activation for testing
   const handleForceActivate = async () => {
-    if (!currentOrder) return;
+    if (!isAdmin || !currentOrder) return;
     setIsVerifying(true);
     await verifyCutluyOrder(currentOrder.orderId);
     setIsVerifying(false);
@@ -214,7 +231,9 @@ export const CutluyPaymentModal: React.FC<CutluyPaymentModalProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-gray-400">
-                {config.apiKey ? `API Key loaded: ${config.apiKey.slice(0, 10)}...` : "Please enter your CutLuy API key in Admin Settings."}
+                {isAdmin
+                  ? (config.apiKey ? `Admin Mode: Local backup key configured (${config.apiKey.slice(0, 8)}...)` : "Centralized server key is active.")
+                  : "Secure KHQR payment gateway is active and fully configured."}
               </p>
             </div>
 
@@ -305,14 +324,16 @@ export const CutluyPaymentModal: React.FC<CutluyPaymentModalProps> = ({
                   </div>
 
                   {/* Testing Bypass Option */}
-                  <div className="pt-2 text-center">
-                    <button
-                      onClick={handleForceActivate}
-                      className="text-[11px] text-gray-500 hover:text-emerald-400 underline cursor-pointer transition-colors"
-                    >
-                      Testing / Demo: Force Confirm & Activate VIP
-                    </button>
-                  </div>
+                  {isAdmin && (
+                    <div className="pt-2 text-center">
+                      <button
+                        onClick={handleForceActivate}
+                        className="text-[11px] text-gray-500 hover:text-emerald-400 underline cursor-pointer transition-colors"
+                      >
+                        Testing / Demo: Force Confirm & Activate VIP
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             )}

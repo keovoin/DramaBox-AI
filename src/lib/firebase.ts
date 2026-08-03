@@ -122,10 +122,25 @@ export function subscribeToDramasFromFirestore(onUpdate: (dramas: Drama[]) => vo
     snapshot.forEach((docSnap) => {
       items.push(docSnap.data() as Drama);
     });
-    // Always dispatch snapshot items (even if empty array) so App can sync default catalog
     onUpdate(items);
   }, (error) => {
     console.error("Firestore dramas subscription error:", error);
+  });
+}
+
+// Realtime Listener for Users (Admin only)
+export function subscribeToUsersFromFirestore(onUpdate: (users: UserProfile[]) => void) {
+  const usersRef = collection(db, "users");
+  return onSnapshot(usersRef, (snapshot) => {
+    const items: UserProfile[] = [];
+    snapshot.forEach((docSnap) => {
+      if (docSnap.id !== "connection_test") {
+        items.push(docSnap.data() as UserProfile);
+      }
+    });
+    onUpdate(items);
+  }, (error) => {
+    console.error("Firestore users subscription error:", error);
   });
 }
 

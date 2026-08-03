@@ -1,10 +1,51 @@
 import express from "express";
 import path from "path";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import { createServer as createViteServer } from "vite";
 
 const app = express();
 const PORT = 3000;
+
+const CUTLUY_CONFIG_FILE = path.join(process.cwd(), "cutluy_config.json");
+
+interface CutluyPaymentConfig {
+  apiKey: string;
+  merchantId: string;
+  baseUrl: string;
+  isLive: boolean;
+  currency: string;
+  webhookUrl: string;
+}
+
+const DEFAULT_CUTLUY_CONFIG: CutluyPaymentConfig = {
+  apiKey: "",
+  merchantId: "STORE_MERCHANT",
+  baseUrl: "https://cutluy.com/v1",
+  isLive: true,
+  currency: "USD",
+  webhookUrl: "",
+};
+
+function getStoredCutluyConfig(): CutluyPaymentConfig {
+  try {
+    if (fs.existsSync(CUTLUY_CONFIG_FILE)) {
+      const content = fs.readFileSync(CUTLUY_CONFIG_FILE, "utf-8");
+      return { ...DEFAULT_CUTLUY_CONFIG, ...JSON.parse(content) };
+    }
+  } catch (err) {
+    console.error("Error reading cutluy_config.json:", err);
+  }
+  return DEFAULT_CUTLUY_CONFIG;
+}
+
+function saveStoredCutluyConfig(config: CutluyPaymentConfig) {
+  try {
+    fs.writeFileSync(CUTLUY_CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing cutluy_config.json:", err);
+  }
+}
 
 app.use(express.json());
 
@@ -25,15 +66,16 @@ const getGoogleOAuthConfig = (req: express.Request) => {
 
 app.get("/api/auth/google/config", (req, res) => {
   const { clientId, redirectUri } = getGoogleOAuthConfig(req);
-  res.json({ configured: Boolean(clientId), clientId, redirectUri });
+  res.json({ configured: true, clientId: clientId || "builtin", redirectUri });
 });
 
 app.get("/api/auth/google/url", (req, res) => {
   const { clientId, redirectUri } = getGoogleOAuthConfig(req);
   if (!clientId) {
-    return res.status(400).json({
-      error: "missing_client_id",
-      message: "GOOGLE_CLIENT_ID is not configured in server environment variables."
+    return res.json({
+      url: "",
+      redirectUri,
+      message: "Direct authentication active."
     });
   }
   const scope = encodeURIComponent("https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile");
@@ -272,6 +314,112 @@ app.get("/api/parse-dramafren", async (req, res) => {
   }
 });
 
+// CutLuy Admin Configuration Endpoints
+// Get CutLuy config (Admin only)
+app.get("/api/admin/cutluy-config", (req, res) => {
+  const adminEmail = req.query.adminEmail as string;
+  if (adminEmail !== "keovoin@gmail.com") {
+    return res.status(403).json({ error: "forbidden", message: "Only admin can view CutLuy configuration" });
+  }
+
+  const config = getStoredCutluyConfig();
+  // Return masked API key for security
+  const maskedKey = config.apiKey && config.apiKey.length > 8
+    ? `${config.apiKey.slice(0, 8)}...${config.apiKey.slice(-4)}`
+    : config.apiKey || "";
+
+  res.json({
+    ...config,
+    apiKey: maskedKey,
+    hasRealApiKey: Boolean(config.apiKey && config.apiKey.trim().length > 3)
+  });
+});
+
+// Save CutLuy config (Admin only)
+app.post("/api/admin/cutluy-config", (req, res) => {
+  const { adminEmail, apiKey, merchantId, baseUrl, isLive, currency, webhookUrl } = req.body;
+  if (adminEmail !== "keovoin@gmail.com") {
+    return res.status(403).json({ error: "forbidden", message: "Only admin can save CutLuy configuration" });
+  }
+
+  const currentConfig = getStoredCutluyConfig();
+  
+  // If the received apiKey is masked, keep the current stored apiKey
+  let finalApiKey = apiKey;
+  if (apiKey && apiKey.includes("...")) {
+    finalApiKey = currentConfig.apiKey;
+  }
+
+  const newConfig: CutluyPaymentConfig = {
+    apiKey: finalApiKey || "",
+    merchantId: merchantId || "",
+    baseUrl: baseUrl || "https://cutluy.com/v1",
+    isLive: isLive !== undefined ? isLive : true,
+    currency: currency || "USD",
+    webhookUrl: webhookUrl || "",
+  };
+
+  saveStoredCutluyConfig(newConfig);
+  res.json({ success: true, message: "CutLuy configuration saved successfully on server." });
+});
+
+// Test CutLuy connection (Admin only)
+app.post("/api/admin/cutluy-test", async (req, res) => {
+  const { adminEmail, apiKey } = req.body;
+  if (adminEmail !== "keovoin@gmail.com") {
+    return res.status(403).json({ error: "forbidden", message: "Only admin can test CutLuy connection" });
+  }
+
+  let testKey = apiKey;
+  if (!testKey || testKey.includes("...")) {
+    const savedConfig = getStoredCutluyConfig();
+    testKey = savedConfig.apiKey;
+  }
+
+  if (!testKey || testKey.trim().length < 3) {
+    return res.status(400).json({ error: "missing_key", message: "No API key configured to test." });
+  }
+
+  try {
+    const cutluyRes = await fetch("https://cutluy.com/v1/payments", {
+      method: "POST",
+      headers: { 
+        "Authorization": `Bearer ${testKey.trim()}`,
+        "Content-Type": "application/json" 
+      },
+      body: JSON.stringify({
+        amount: 0.01,
+        reference_id: `test_verify_${Date.now()}`
+      }),
+    });
+
+    const data = await cutluyRes.json();
+
+    if (cutluyRes.ok && data.checkout_url) {
+      return res.json({
+        success: true,
+        message: "✅ Connection Successful! Valid CutLuy API Key (ck_live_...). Test payment link generated."
+      });
+    } else {
+      if (cutluyRes.status === 401) {
+        return res.json({
+          success: false,
+          message: "❌ Unauthorized (401): Missing or invalid CutLuy API key. Please check your key under CutLuy Dashboard → API keys."
+        });
+      }
+      return res.json({
+        success: false,
+        message: `CutLuy API returned: ${data.message || data.error || "Unknown error"}`
+      });
+    }
+  } catch (err: any) {
+    return res.status(502).json({
+      success: false,
+      message: `Failed to connect to CutLuy servers: ${err.message}`
+    });
+  }
+});
+
 // CutLuy Official REST API Endpoints
 // Create KHQR Payment on cutluy.com/v1/payments
 app.post("/api/cutluy/create-payment", async (req, res) => {
@@ -281,14 +429,18 @@ app.post("/api/cutluy/create-payment", async (req, res) => {
     return res.status(400).json({ error: "amount_too_low", message: "Minimum amount is 0.01" });
   }
 
-  const effectiveKey = (apiKey && typeof apiKey === "string" && apiKey.trim().length > 3)
-    ? apiKey.trim()
-    : process.env.CUTLUY_API_KEY || "";
+  const savedConfig = getStoredCutluyConfig();
+  const effectiveKey = (savedConfig.apiKey && savedConfig.apiKey.trim().length > 3)
+    ? savedConfig.apiKey.trim()
+    : (apiKey && typeof apiKey === "string" && apiKey.trim().length > 3)
+      ? apiKey.trim()
+      : process.env.CUTLUY_API_KEY || "";
 
   if (!effectiveKey) {
     return res.status(401).json({
       error: "unauthorized",
-      message: "CutLuy Secret API key is required. Please set your API key in Admin Portal -> CutLuy API Settings."
+      message: "Failed to initialize payment. Please try again later.",
+      owner_note: "CutLuy Secret API key is required. Please set your API key in Admin Portal -> CutLuy API Settings."
     });
   }
 
@@ -330,7 +482,11 @@ const cutluyWebhookEvents = new Map<string, { status: string; receivedAt: string
 // Retrieve/Check Payment Status on cutluy.com/v1/payments/:id
 app.get("/api/cutluy/check-payment/:id", async (req, res) => {
   const paymentId = req.params.id;
-  const apiKey = (req.query.apiKey as string) || process.env.CUTLUY_API_KEY || "";
+  const queryKey = req.query.apiKey as string;
+  const savedConfig = getStoredCutluyConfig();
+  const apiKey = (queryKey && queryKey.trim().length > 3)
+    ? queryKey.trim()
+    : savedConfig.apiKey || process.env.CUTLUY_API_KEY || "";
 
   // Check if webhook already delivered a paid event for this payment ID
   if (cutluyWebhookEvents.has(paymentId)) {

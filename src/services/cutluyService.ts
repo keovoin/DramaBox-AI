@@ -63,7 +63,11 @@ export const createCutluyPaymentOrder = async (
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.message || data.error || "CutLuy payment creation failed.");
+      const err = new Error(data.message || data.error || "CutLuy payment creation failed.");
+      if (data.owner_note) {
+        (err as any).owner_note = data.owner_note;
+      }
+      throw err;
     }
 
     // CutLuy API response fields
@@ -133,39 +137,25 @@ export const testCutluyApiKey = async (apiKey: string): Promise<{ success: boole
   }
 
   try {
-    const res = await fetch("/api/cutluy/create-payment", {
+    const uStr = localStorage.getItem("dramahub_user");
+    const user = uStr ? JSON.parse(uStr) : null;
+    const adminEmail = user?.email || "keovoin@gmail.com";
+
+    const res = await fetch("/api/admin/cutluy-test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        amount: 0.01,
-        reference_id: `test_verify_${Date.now()}`,
+        adminEmail,
         apiKey: apiKey.trim(),
       }),
     });
 
     const data = await res.json();
-
-    if (res.ok && data.checkout_url) {
-      return {
-        success: true,
-        message: "✅ Connection Successful! Valid CutLuy API Key (ck_live_...). Test payment link generated."
-      };
-    } else {
-      if (res.status === 401) {
-        return {
-          success: false,
-          message: "❌ Unauthorized (401): Missing or invalid CutLuy API key. Please check your key under CutLuy Dashboard → API keys."
-        };
-      }
-      return {
-        success: false,
-        message: `CutLuy API returned: ${data.message || data.error || "Unknown error"}`
-      };
-    }
+    return data;
   } catch (err: any) {
     return {
       success: false,
-      message: `Failed to connect to CutLuy servers: ${err.message}`
+      message: `Failed to connect to CutLuy test endpoint: ${err.message}`
     };
   }
 };

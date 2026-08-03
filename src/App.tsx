@@ -12,7 +12,8 @@ import { CutluyPaymentModal } from "./components/CutluyPaymentModal";
 import { ContinueWatching } from "./components/ContinueWatching";
 import { DRAMA_CATALOG } from "./data/dramas";
 import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord } from "./types";
-import { syncUserProfileToFirestore } from "./lib/firebase";
+import { syncUserProfileToFirestore, subscribeToDramasFromFirestore, syncDramaToFirestore, deleteDramaFromFirestore, subscribeToUsersFromFirestore, db } from "./lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 import { Flame, Sparkles, Star, Plus, Film, Compass, Heart, History, RefreshCw, Shield, Bookmark, Check, Mail } from "lucide-react";
 
 export default function App() {
@@ -172,6 +173,56 @@ export default function App() {
       console.error("Failed to save catalog", err);
     }
   }, [dramas]);
+
+  // 1. Real-time Firestore Sync for Drama Catalog (All Users)
+  useEffect(() => {
+    const unsubscribe = subscribeToDramasFromFirestore((firestoreDramas) => {
+      if (firestoreDramas && firestoreDramas.length > 0) {
+        // Sort alphabetically to maintain consistent UI rendering order
+        const sorted = [...firestoreDramas].sort((a, b) => a.title.localeCompare(b.title));
+        setDramas(sorted);
+      } else {
+        // If Firestore is empty, seed it with the default dramas so the catalog isn't empty
+        DRAMA_CATALOG.forEach((drama) => {
+          syncDramaToFirestore(drama);
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 2. Real-time Firestore Sync for Users List (Admin Only)
+  useEffect(() => {
+    if (user?.email !== "keovoin@gmail.com") return;
+
+    const unsubscribe = subscribeToUsersFromFirestore((firestoreUsers) => {
+      if (firestoreUsers && firestoreUsers.length > 0) {
+        setUsersList(firestoreUsers);
+      }
+    });
+    return () => unsubscribe();
+  }, [user?.email]);
+
+  // 3. Real-time Firestore Sync for active logged-in User profile
+  useEffect(() => {
+    if (!user?.id) return;
+
+    // Proactively sync local changes to Firestore (e.g. VIP purchase, coins, name update)
+    syncUserProfileToFirestore(user);
+
+    const userRef = doc(db, "users", user.id);
+    const unsubscribe = onSnapshot(userRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const remoteProfile = docSnap.data() as UserProfile;
+        if (JSON.stringify(remoteProfile) !== JSON.stringify(user)) {
+          setUser(remoteProfile);
+        }
+      }
+    }, (err) => {
+      console.error("Firestore user snapshot error:", err);
+    });
+    return () => unsubscribe();
+  }, [user?.id]);
   
   // Favorites Local Storage
   const [favorites, setFavorites] = useState<string[]>(() => {
@@ -395,13 +446,51 @@ export default function App() {
     });
   };
 
-  const handleUpdateDramas = (updatedDramas: Drama[]) => {
+  const handleUpdateDramas = async (updatedDramas: Drama[]) => {
+    try {
+      // Delta sync: Delete removed dramas from Firestore
+      const deleted = dramas.filter((d) => !updatedDramas.some((ud) => ud.id === d.id));
+      for (const d of deleted) {
+        await deleteDramaFromFirestore(d.id);
+      }
+      // Delta sync: Upload added/updated dramas to Firestore
+      const modifiedOrAdded = updatedDramas.filter((ud) => {
+        const existing = dramas.find((d) => d.id === ud.id);
+        return !existing || JSON.stringify(existing) !== JSON.stringify(ud);
+      });
+      for (const d of modifiedOrAdded) {
+        await syncDramaToFirestore(d);
+      }
+    } catch (err) {
+      console.error("Error syncing dramas delta to Firestore:", err);
+    }
     setDramas(updatedDramas);
   };
 
-  const handleAddCustomDrama = (newDrama: Drama) => {
+  const handleAddCustomDrama = async (newDrama: Drama) => {
     setDramas((prev) => [newDrama, ...prev]);
     setActivePlayerDrama(newDrama);
+    try {
+      await syncDramaToFirestore(newDrama);
+    } catch (err) {
+      console.error("Error saving new drama to Firestore:", err);
+    }
+  };
+
+  const handleUpdateUsersList = async (updatedUsers: UserProfile[]) => {
+    try {
+      // Delta sync: Sync any added/modified users to Firestore
+      const modifiedOrAdded = updatedUsers.filter((uu) => {
+        const existing = usersList.find((u) => u.id === uu.id);
+        return !existing || JSON.stringify(existing) !== JSON.stringify(uu);
+      });
+      for (const u of modifiedOrAdded) {
+        await syncUserProfileToFirestore(u);
+      }
+    } catch (err) {
+      console.error("Error syncing users delta to Firestore:", err);
+    }
+    setUsersList(updatedUsers);
   };
 
   const handleOpenCutluyCheckout = (plan: SubscriptionPlan) => {
@@ -587,7 +676,7 @@ export default function App() {
                 usersList={usersList}
                 onUpdateDramas={handleUpdateDramas}
                 onUpdateUser={setUser}
-                onUpdateUsersList={setUsersList}
+                onUpdateUsersList={handleUpdateUsersList}
                 onPreviewDrama={(drama, epNum) => handleOpenPlayer(drama, epNum || 1)}
               />
             ) : (
@@ -794,6 +883,7 @@ export default function App() {
           onToggleWatchlist={toggleWatchlist}
           isVipMember={user?.isVip || false}
           onWatchProgress={handleWatchProgress}
+          onRequestUpgrade={() => setShowUpgradeModal(true)}
         />
       )}
 
@@ -812,7 +902,17 @@ export default function App() {
         <AuthModal
           isOpen={showAuthModal}
           onClose={() => setShowAuthModal(false)}
-          onLoginSuccess={(loggedUser) => setUser(loggedUser)}
+          onLoginSuccess={async (loggedUser) => {
+            setUser(loggedUser);
+            await syncUserProfileToFirestore(loggedUser);
+            setUsersList((prev) => {
+              const exists = prev.some((u) => u.id === loggedUser.id || u.email === loggedUser.email);
+              if (exists) {
+                return prev.map((u) => (u.id === loggedUser.id || u.email === loggedUser.email ? loggedUser : u));
+              }
+              return [loggedUser, ...prev];
+            });
+          }}
         />
       )}
 

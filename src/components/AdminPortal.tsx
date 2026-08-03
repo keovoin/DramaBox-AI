@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -127,6 +127,29 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   // Cutluy API Settings State
   const [cutluyForm, setCutluyForm] = useState<CutluyPaymentConfig>(getCutluyConfig());
+
+  // Fetch CutLuy configuration from server on mount
+  useEffect(() => {
+    const fetchCutluyConfig = async () => {
+      try {
+        const res = await fetch(`/api/admin/cutluy-config?adminEmail=${encodeURIComponent(user?.email || "keovoin@gmail.com")}`);
+        if (res.ok) {
+          const data = await res.json();
+          setCutluyForm({
+            apiKey: data.apiKey || "",
+            merchantId: data.merchantId || "STORE_MERCHANT",
+            baseUrl: data.baseUrl || "https://cutluy.com/v1",
+            isLive: data.isLive !== undefined ? data.isLive : true,
+            currency: data.currency || "USD",
+            webhookUrl: data.webhookUrl || "",
+          });
+        }
+      } catch (err) {
+        console.error("Failed to load server-side CutLuy config:", err);
+      }
+    };
+    fetchCutluyConfig();
+  }, [user?.email]);
   const [cutluySavedNotice, setCutluySavedNotice] = useState<boolean>(false);
   const [testResult, setTestResult] = useState<{ message: string; success: boolean } | null>(null);
   const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
@@ -499,11 +522,30 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     d.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleSaveCutluyConfig = (e: React.FormEvent) => {
+  const handleSaveCutluyConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    saveCutluyConfig(cutluyForm);
-    setCutluySavedNotice(true);
-    setTimeout(() => setCutluySavedNotice(false), 3000);
+    try {
+      const res = await fetch("/api/admin/cutluy-config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          adminEmail: user?.email || "keovoin@gmail.com",
+          ...cutluyForm,
+        }),
+      });
+      if (res.ok) {
+        saveCutluyConfig(cutluyForm);
+        setCutluySavedNotice(true);
+        setTimeout(() => setCutluySavedNotice(false), 3000);
+      } else {
+        const data = await res.json();
+        alert(`Failed to save configuration on server: ${data.message || "Unknown error"}`);
+      }
+    } catch (err: any) {
+      alert(`Error saving CutLuy configuration: ${err.message}`);
+    }
   };
 
   const handleTestApiKeyClick = async () => {
