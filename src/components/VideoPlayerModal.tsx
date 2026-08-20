@@ -83,6 +83,10 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const controlsTimerRef = useRef<any>(null);
+  const touchStartYRef = useRef<number | null>(null);
+  const touchStartXRef = useRef<number | null>(null);
+  const lastTapRef = useRef<number>(0);
+  const [heartAnim, setHeartAnim] = useState<boolean>(false);
 
   // Fullscreen Handler
   const handleToggleFullscreen = () => {
@@ -125,6 +129,56 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
       controlsTimerRef.current = setTimeout(() => {
         setShowControls(false);
       }, 4000);
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      touchStartYRef.current = e.touches[0].clientY;
+      touchStartXRef.current = e.touches[0].clientX;
+
+      // Detect Double Tap for quick like
+      const now = Date.now();
+      if (now - lastTapRef.current < 300) {
+        setHasLiked(true);
+        setLikesCount((prev) => (hasLiked ? prev : prev + 1));
+        setHeartAnim(true);
+        setTimeout(() => setHeartAnim(false), 900);
+      }
+      lastTapRef.current = now;
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartYRef.current === null || touchStartXRef.current === null) return;
+    const endY = e.changedTouches[0].clientY;
+    const endX = e.changedTouches[0].clientX;
+    const deltaY = endY - touchStartYRef.current;
+    const deltaX = endX - touchStartXRef.current;
+
+    touchStartYRef.current = null;
+    touchStartXRef.current = null;
+
+    // Minimum swipe threshold 50px vertical and dominantly vertical
+    if (Math.abs(deltaY) > 50 && Math.abs(deltaY) > Math.abs(deltaX) * 1.3) {
+      if (deltaY < 0) {
+        // Swiped UP -> Next Episode
+        if (currentEpNum < drama.episodes.length) {
+          handleSelectEpisode(currentEpNum + 1);
+          setShareToast(`Swiped Up ➔ EP ${currentEpNum + 1}`);
+          setTimeout(() => setShareToast(null), 2000);
+        } else {
+          setShareToast("You're on the latest episode!");
+          setTimeout(() => setShareToast(null), 2000);
+        }
+      } else {
+        // Swiped DOWN -> Previous Episode
+        if (currentEpNum > 1) {
+          handleSelectEpisode(currentEpNum - 1);
+          setShareToast(`Swiped Down ➔ EP ${currentEpNum - 1}`);
+          setTimeout(() => setShareToast(null), 2000);
+        }
+      }
     }
   };
 
@@ -442,6 +496,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             <div
               ref={playerContainerRef}
               onClick={handleContainerTouchClick}
+              onTouchStart={handleTouchStart}
+              onTouchEnd={handleTouchEnd}
               onContextMenu={(e) => e.preventDefault()}
               onDragStart={(e) => e.preventDefault()}
               className={`relative bg-black overflow-hidden flex items-center justify-center transition-all select-none w-full h-full md:rounded-2xl md:shadow-2xl ${
@@ -450,6 +506,13 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                   : "md:w-full md:max-w-4xl md:aspect-video"
               }`}
             >
+              {/* Double Tap Heart Animation */}
+              {heartAnim && (
+                <div className="absolute inset-0 m-auto w-24 h-24 flex items-center justify-center z-40 pointer-events-none animate-ping">
+                  <Heart className="w-20 h-20 fill-red-600 text-red-600 drop-shadow-[0_0_25px_rgba(225,29,72,0.9)]" />
+                </div>
+              )}
+
               <video
                 ref={videoRef}
                 src={isLocked ? "" : effectiveVideoUrl}

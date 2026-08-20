@@ -61,34 +61,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setNotice("");
 
     try {
-      // First attempt Firebase Google Auth popup
+      // Attempt Firebase Google Auth popup with explicit account chooser
       const userProfile = await loginWithFirebaseGoogle();
       setIsLoading(false);
       onLoginSuccess(userProfile);
       onClose();
     } catch (firebaseErr: any) {
-      console.warn("Firebase Google Auth popup restricted in preview frame. Proceeding with instant Google account sign-in...", firebaseErr);
-
-      // Instant seamless Google sign-in fallback without requiring GCP OAuth credentials
-      const userEmail = gmailEmail.trim() || "user@gmail.com";
-      const userName = gmailName.trim() || userEmail.split("@")[0] || "DramaHub User";
-      const isAdmin = userEmail.toLowerCase() === "keovoin@gmail.com";
-
-      const userProfile: UserProfile = {
-        id: `usr_gmail_${Date.now()}`,
-        name: userName,
-        email: userEmail,
-        authMethod: "gmail",
-        avatarUrl: "https://lh3.googleusercontent.com/a/default-user=s96-c",
-        isVip: isAdmin,
-        vipExpiresAt: isAdmin ? "2030-12-31" : undefined,
-        coins: 0,
-        createdAt: new Date().toISOString(),
-      };
-
+      console.warn("Firebase Google Auth error:", firebaseErr);
       setIsLoading(false);
-      onLoginSuccess(userProfile);
-      onClose();
+
+      if (firebaseErr?.code === "auth/popup-closed-by-user" || firebaseErr?.message?.includes("closed-by-user")) {
+        setNotice("Google sign-in popup was closed. Please try again.");
+      } else if (firebaseErr?.code === "auth/unauthorized-domain") {
+        setNotice("Domain 'urdrama.com' must be added to Firebase Console > Authentication > Settings > Authorized Domains. You can also sign in by entering your email address below.");
+      } else if (firebaseErr?.code === "auth/popup-blocked") {
+        setNotice("Popup blocked by your browser. Please allow popups for urdrama.com or sign in with your email below.");
+      } else {
+        setNotice(firebaseErr?.message || "Google sign-in was not completed. You can enter your Gmail address below.");
+      }
     }
   };
 
@@ -120,9 +110,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     };
 
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [onLoginSuccess, onClose]);
+  window.addEventListener("message", handleMessage);
+  return () => window.removeEventListener("message", handleMessage);
+}, [onLoginSuccess, onClose]);
 
   // Handle Manual Gmail Form Submission
   const handleGmailLogin = (e: React.FormEvent) => {
@@ -151,28 +141,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setIsLoading(false);
       onClose();
     }, 600);
-  };
-
-  // Quick One-Click Google Account Sign-In
-  const handleQuickGoogleSignIn = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      const userProfile: UserProfile = {
-        id: `usr_gmail_${Date.now()}`,
-        name: "Keo Voin",
-        email: "keovoin@gmail.com",
-        authMethod: "gmail",
-        avatarUrl: "https://lh3.googleusercontent.com/a/default-user=s96-c",
-        isVip: true,
-        vipExpiresAt: "2030-12-31",
-        coins: 0,
-        createdAt: new Date().toISOString(),
-      };
-
-      onLoginSuccess(userProfile);
-      setIsLoading(false);
-      onClose();
-    }, 500);
   };
 
   // Handle Send Phone OTP Code
@@ -277,9 +245,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* Notice Message */}
         {notice && (
-          <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-400 text-xs font-medium flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{notice}</span>
+          <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-300 text-xs font-medium space-y-1">
+            <div className="flex items-center gap-2 font-bold text-amber-200">
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-amber-400" />
+              <span>Authentication Notice</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-amber-300/90">{notice}</p>
           </div>
         )}
 
@@ -311,7 +282,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
                 />
               </svg>
-              <span>{isLoading ? "Connecting to Google..." : "Sign In with Google Account"}</span>
+              <span>{isLoading ? "Connecting to Google..." : "Choose Google Account to Sign In"}</span>
             </button>
 
             <div className="flex items-center gap-3 my-2">

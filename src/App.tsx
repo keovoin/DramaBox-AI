@@ -10,8 +10,9 @@ import { AuthModal } from "./components/AuthModal";
 import { EditProfileModal } from "./components/EditProfileModal";
 import { CutluyPaymentModal } from "./components/CutluyPaymentModal";
 import { ContinueWatching } from "./components/ContinueWatching";
+import { InstallAppPrompt } from "./components/InstallAppPrompt";
 import { DRAMA_CATALOG } from "./data/dramas";
-import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord } from "./types";
+import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord, PaymentGatewayType } from "./types";
 import { syncUserProfileToFirestore, subscribeToDramasFromFirestore, syncDramaToFirestore, deleteDramaFromFirestore, subscribeToUsersFromFirestore, db } from "./lib/firebase";
 import { doc, onSnapshot } from "firebase/firestore";
 import { Flame, Sparkles, Star, Plus, Film, Compass, Heart, History, RefreshCw, Shield, Bookmark, Check, Mail } from "lucide-react";
@@ -271,6 +272,8 @@ export default function App() {
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [showEditProfileModal, setShowEditProfileModal] = useState<boolean>(false);
   const [showCutluyModal, setShowCutluyModal] = useState<boolean>(false);
+  const [cutluyGateway, setCutluyGateway] = useState<PaymentGatewayType>("cutluy");
+  const [cutluyMode, setCutluyMode] = useState<"bakong" | "aba">("bakong");
 
   const handleSaveProfile = (updatedProfile: UserProfile) => {
     setUser(updatedProfile);
@@ -493,8 +496,14 @@ export default function App() {
     setUsersList(updatedUsers);
   };
 
-  const handleOpenCutluyCheckout = (plan: SubscriptionPlan) => {
+  const handleOpenCutluyCheckout = (
+    plan: SubscriptionPlan,
+    gateway?: PaymentGatewayType,
+    mode?: "bakong" | "aba"
+  ) => {
     setCutluyPlan(plan);
+    if (gateway) setCutluyGateway(gateway);
+    if (mode) setCutluyMode(mode);
     setShowCutluyModal(true);
   };
 
@@ -926,7 +935,7 @@ export default function App() {
         />
       )}
 
-      {/* Cutluy Payment Gateway Modal */}
+      {/* Cutluy / SenghongStore Payment Gateway Modal */}
       {showCutluyModal && (
         <CutluyPaymentModal
           isOpen={showCutluyModal}
@@ -934,6 +943,8 @@ export default function App() {
           plan={cutluyPlan}
           user={user}
           onPaymentSuccess={handlePaymentSuccess}
+          initialGateway={cutluyGateway}
+          initialMode={cutluyMode}
         />
       )}
 
@@ -976,6 +987,9 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* PWA 1-Click Install App Banner */}
+      <InstallAppPrompt />
     </div>
   );
 }

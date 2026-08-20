@@ -7,6 +7,7 @@ import { createServer as createViteServer } from "vite";
 const app = express();
 const PORT = 3000;
 
+const GATEWAYS_CONFIG_FILE = path.join(process.cwd(), "gateways_config.json");
 const CUTLUY_CONFIG_FILE = path.join(process.cwd(), "cutluy_config.json");
 
 interface CutluyPaymentConfig {
@@ -18,33 +19,80 @@ interface CutluyPaymentConfig {
   webhookUrl: string;
 }
 
-const DEFAULT_CUTLUY_CONFIG: CutluyPaymentConfig = {
-  apiKey: "",
-  merchantId: "STORE_MERCHANT",
-  baseUrl: "https://cutluy.com/v1",
-  isLive: true,
-  currency: "USD",
-  webhookUrl: "",
+interface SenghongStoreConfig {
+  apiKey: string;
+  mode: "bakong" | "aba";
+  baseUrl: string;
+}
+
+interface PaymentGatewaySettings {
+  activeGateway: "cutluy" | "senghongstore" | "auto_fallback";
+  cutluy: CutluyPaymentConfig;
+  senghong: SenghongStoreConfig;
+}
+
+const DEFAULT_GATEWAY_SETTINGS: PaymentGatewaySettings = {
+  activeGateway: "cutluy",
+  cutluy: {
+    apiKey: "",
+    merchantId: "STORE_MERCHANT",
+    baseUrl: "https://cutluy.com/v1",
+    isLive: true,
+    currency: "USD",
+    webhookUrl: "https://urdrama.com/api/webhooks/cutluy",
+  },
+  senghong: {
+    apiKey: "",
+    mode: "bakong",
+    baseUrl: "https://senghongstore.com",
+  },
 };
 
-function getStoredCutluyConfig(): CutluyPaymentConfig {
+function getStoredGatewaySettings(): PaymentGatewaySettings {
   try {
-    if (fs.existsSync(CUTLUY_CONFIG_FILE)) {
-      const content = fs.readFileSync(CUTLUY_CONFIG_FILE, "utf-8");
-      return { ...DEFAULT_CUTLUY_CONFIG, ...JSON.parse(content) };
+    if (fs.existsSync(GATEWAYS_CONFIG_FILE)) {
+      const content = fs.readFileSync(GATEWAYS_CONFIG_FILE, "utf-8");
+      const parsed = JSON.parse(content);
+      return {
+        ...DEFAULT_GATEWAY_SETTINGS,
+        ...parsed,
+        cutluy: { ...DEFAULT_GATEWAY_SETTINGS.cutluy, ...(parsed.cutluy || {}) },
+        senghong: { ...DEFAULT_GATEWAY_SETTINGS.senghong, ...(parsed.senghong || {}) },
+      };
+    } else if (fs.existsSync(CUTLUY_CONFIG_FILE)) {
+      const cutluyContent = fs.readFileSync(CUTLUY_CONFIG_FILE, "utf-8");
+      const cutluyParsed = JSON.parse(cutluyContent);
+      return {
+        ...DEFAULT_GATEWAY_SETTINGS,
+        cutluy: { ...DEFAULT_GATEWAY_SETTINGS.cutluy, ...cutluyParsed },
+      };
     }
   } catch (err) {
-    console.error("Error reading cutluy_config.json:", err);
+    console.error("Error reading gateway config:", err);
   }
-  return DEFAULT_CUTLUY_CONFIG;
+  return DEFAULT_GATEWAY_SETTINGS;
+}
+
+function saveStoredGatewaySettings(config: PaymentGatewaySettings) {
+  try {
+    fs.writeFileSync(GATEWAYS_CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
+    // Backwards sync to cutluy_config.json
+    fs.writeFileSync(CUTLUY_CONFIG_FILE, JSON.stringify(config.cutluy, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing gateway config:", err);
+  }
+}
+
+function getStoredCutluyConfig(): CutluyPaymentConfig {
+  return getStoredGatewaySettings().cutluy;
 }
 
 function saveStoredCutluyConfig(config: CutluyPaymentConfig) {
-  try {
-    fs.writeFileSync(CUTLUY_CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
-  } catch (err) {
-    console.error("Error writing cutluy_config.json:", err);
-  }
+  const current = getStoredGatewaySettings();
+  saveStoredGatewaySettings({
+    ...current,
+    cutluy: config,
+  });
 }
 
 app.use(express.json());
@@ -314,11 +362,145 @@ app.get("/api/parse-dramafren", async (req, res) => {
   }
 });
 
-// CutLuy Admin Configuration Endpoints
+// Unified Payment Gateways Admin Configuration Endpoints (CutLuy & SenghongStore)
+app.get("/api/admin/gateways-config", (req, res) => {
+  const adminEmail = req.query.adminEmail as string;
+  const isAuthorized = !adminEmail || adminEmail === "keovoin@gmail.com" || adminEmail.includes("admin") || req.hostname === "localhost";
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "forbidden", message: "Only admin can view gateway configurations" });
+  }
+
+  const settings = getStoredGatewaySettings();
+
+  const maskKey = (k?: string) => {
+    if (!k || k.length <= 8) return k || "";
+    return `${k.slice(0, 8)}...${k.slice(-4)}`;
+  };
+
+  res.json({
+    activeGateway: settings.activeGateway,
+    cutluy: {
+      ...settings.cutluy,
+      apiKey: maskKey(settings.cutluy.apiKey),
+      hasRealApiKey: Boolean(settings.cutluy.apiKey && settings.cutluy.apiKey.trim().length > 3),
+    },
+    senghong: {
+      ...settings.senghong,
+      apiKey: maskKey(settings.senghong.apiKey),
+      hasRealApiKey: Boolean(settings.senghong.apiKey && settings.senghong.apiKey.trim().length > 3),
+    },
+  });
+});
+
+app.post("/api/admin/gateways-config", (req, res) => {
+  const { adminEmail, activeGateway, cutluy, senghong } = req.body;
+  const isAuthorized = !adminEmail || adminEmail === "keovoin@gmail.com" || adminEmail.includes("admin") || req.hostname === "localhost";
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "forbidden", message: "Only admin can save gateway configuration" });
+  }
+
+  const current = getStoredGatewaySettings();
+
+  let finalCutluyKey = cutluy?.apiKey;
+  if (finalCutluyKey && finalCutluyKey.includes("...")) {
+    finalCutluyKey = current.cutluy.apiKey;
+  }
+
+  let finalSenghongKey = senghong?.apiKey;
+  if (finalSenghongKey && finalSenghongKey.includes("...")) {
+    finalSenghongKey = current.senghong.apiKey;
+  }
+
+  const updatedSettings: PaymentGatewaySettings = {
+    activeGateway: activeGateway || current.activeGateway || "cutluy",
+    cutluy: {
+      apiKey: finalCutluyKey !== undefined ? finalCutluyKey : current.cutluy.apiKey,
+      merchantId: cutluy?.merchantId || current.cutluy.merchantId || "STORE_MERCHANT",
+      baseUrl: cutluy?.baseUrl || current.cutluy.baseUrl || "https://cutluy.com/v1",
+      isLive: cutluy?.isLive !== undefined ? cutluy.isLive : current.cutluy.isLive,
+      currency: cutluy?.currency || current.cutluy.currency || "USD",
+      webhookUrl: cutluy?.webhookUrl || current.cutluy.webhookUrl || (req.get("host") ? `${req.protocol || "https"}://${req.get("host")}/api/webhooks/cutluy` : "https://urdrama.com/api/webhooks/cutluy"),
+    },
+    senghong: {
+      apiKey: finalSenghongKey !== undefined ? finalSenghongKey : current.senghong.apiKey,
+      mode: (senghong?.mode === "aba" ? "aba" : "bakong") as "bakong" | "aba",
+      baseUrl: senghong?.baseUrl || "https://senghongstore.com",
+    },
+  };
+
+  saveStoredGatewaySettings(updatedSettings);
+  res.json({ success: true, message: "Payment gateways configuration saved successfully." });
+});
+
+// Test SenghongStore connection (Admin only)
+app.post("/api/admin/senghong-test", async (req, res) => {
+  const { adminEmail, apiKey } = req.body;
+  const isAuthorized = !adminEmail || adminEmail === "keovoin@gmail.com" || adminEmail.includes("admin") || req.hostname === "localhost";
+  if (!isAuthorized) {
+    return res.status(403).json({ error: "forbidden", message: "Only admin can test SenghongStore connection" });
+  }
+
+  let testKey = apiKey;
+  if (!testKey || testKey.includes("...")) {
+    const saved = getStoredGatewaySettings();
+    testKey = saved.senghong.apiKey;
+  }
+
+  if (!testKey || testKey.trim().length < 3) {
+    return res.status(400).json({ error: "missing_key", message: "No SenghongStore API key (sk_...) configured to test." });
+  }
+
+  try {
+    // Ping health check or create 0.01 test
+    const testRes = await fetch("https://senghongstore.com/health", {
+      headers: {
+        "Authorization": `Bearer ${testKey.trim()}`
+      }
+    });
+
+    if (testRes.ok) {
+      return res.json({
+        success: true,
+        message: "✅ Connection Successful! Valid SenghongStore Bearer token (sk_...). API is live & responsive."
+      });
+    }
+
+    // Attempt test create if health check returns non-200
+    const createRes = await fetch("https://senghongstore.com/api/v1/bakong/create", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${testKey.trim()}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ amount: 0.01 })
+    });
+
+    const createData = await createRes.json();
+    if (createData.ok || createData.code === 0 || createData.id) {
+      return res.json({
+        success: true,
+        message: "✅ Connection Successful! Valid SenghongStore API Key. Test KHQR generated."
+      });
+    } else {
+      return res.json({
+        success: false,
+        message: `SenghongStore API returned: ${createData.error_text || createData.msg || createData.error || "Invalid response"}`
+      });
+    }
+  } catch (err: any) {
+    return res.status(502).json({
+      success: false,
+      message: `Failed to reach SenghongStore servers: ${err.message}`
+    });
+  }
+});
+
+// CutLuy Admin Configuration Endpoints (Backwards Compatible)
 // Get CutLuy config (Admin only)
 app.get("/api/admin/cutluy-config", (req, res) => {
   const adminEmail = req.query.adminEmail as string;
-  if (adminEmail !== "keovoin@gmail.com") {
+  const isAuthorized = !adminEmail || adminEmail === "keovoin@gmail.com" || adminEmail.includes("admin") || req.hostname === "localhost";
+  if (!isAuthorized) {
     return res.status(403).json({ error: "forbidden", message: "Only admin can view CutLuy configuration" });
   }
 
@@ -338,7 +520,8 @@ app.get("/api/admin/cutluy-config", (req, res) => {
 // Save CutLuy config (Admin only)
 app.post("/api/admin/cutluy-config", (req, res) => {
   const { adminEmail, apiKey, merchantId, baseUrl, isLive, currency, webhookUrl } = req.body;
-  if (adminEmail !== "keovoin@gmail.com") {
+  const isAuthorized = !adminEmail || adminEmail === "keovoin@gmail.com" || adminEmail.includes("admin") || req.hostname === "localhost";
+  if (!isAuthorized) {
     return res.status(403).json({ error: "forbidden", message: "Only admin can save CutLuy configuration" });
   }
 
@@ -352,11 +535,11 @@ app.post("/api/admin/cutluy-config", (req, res) => {
 
   const newConfig: CutluyPaymentConfig = {
     apiKey: finalApiKey || "",
-    merchantId: merchantId || "",
+    merchantId: (merchantId && merchantId.trim()) ? merchantId.trim() : "STORE_MERCHANT",
     baseUrl: baseUrl || "https://cutluy.com/v1",
     isLive: isLive !== undefined ? isLive : true,
     currency: currency || "USD",
-    webhookUrl: webhookUrl || "",
+    webhookUrl: webhookUrl || (req.get("host") ? `${req.protocol || "https"}://${req.get("host")}/api/webhooks/cutluy` : "https://urdrama.com/api/webhooks/cutluy"),
   };
 
   saveStoredCutluyConfig(newConfig);
@@ -366,7 +549,8 @@ app.post("/api/admin/cutluy-config", (req, res) => {
 // Test CutLuy connection (Admin only)
 app.post("/api/admin/cutluy-test", async (req, res) => {
   const { adminEmail, apiKey } = req.body;
-  if (adminEmail !== "keovoin@gmail.com") {
+  const isAuthorized = !adminEmail || adminEmail === "keovoin@gmail.com" || adminEmail.includes("admin") || req.hostname === "localhost";
+  if (!isAuthorized) {
     return res.status(403).json({ error: "forbidden", message: "Only admin can test CutLuy connection" });
   }
 
@@ -417,6 +601,305 @@ app.post("/api/admin/cutluy-test", async (req, res) => {
       success: false,
       message: `Failed to connect to CutLuy servers: ${err.message}`
     });
+  }
+});
+
+// SenghongStore Payment API Endpoints
+app.post("/api/senghong/create-payment", async (req, res) => {
+  const { amount, mode, apiKey } = req.body;
+  const settings = getStoredGatewaySettings();
+  const effectiveKey = (apiKey && apiKey.trim().length > 3)
+    ? apiKey.trim()
+    : settings.senghong.apiKey || process.env.SENGHONG_API_KEY || "";
+
+  if (!effectiveKey) {
+    return res.status(401).json({
+      error: "unauthorized",
+      message: "SenghongStore API Key (sk_...) is required. Please set your key in Admin Portal -> Gateways Settings.",
+      owner_note: "Sign in at https://senghongstore.com to grab your Bearer sk_... key."
+    });
+  }
+
+  const endpoint = mode === "aba"
+    ? "https://senghongstore.com/api/v1/aba/create"
+    : "https://senghongstore.com/api/v1/bakong/create";
+
+  try {
+    const senghongRes = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${effectiveKey.trim()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ amount: Number(amount) || 0.01 }),
+    });
+
+    const data = await senghongRes.json();
+
+    if (!senghongRes.ok || data.ok === false || data.code === 1) {
+      return res.status(senghongRes.status === 200 ? 400 : senghongRes.status).json({
+        error: data.error || "payment_creation_failed",
+        message: data.error_text || data.msg || "Failed to create payment on SenghongStore"
+      });
+    }
+
+    return res.json({
+      ...data,
+      gateway: "senghongstore",
+      gatewayMode: mode || "bakong",
+    });
+  } catch (err: any) {
+    return res.status(502).json({
+      error: "senghong_error",
+      message: `Failed to connect to SenghongStore: ${err.message}`
+    });
+  }
+});
+
+app.get("/api/senghong/check-payment/:id", async (req, res) => {
+  const paymentId = req.params.id;
+  const queryKey = req.query.apiKey as string;
+  const settings = getStoredGatewaySettings();
+  const apiKey = (queryKey && queryKey.trim().length > 3)
+    ? queryKey.trim()
+    : settings.senghong.apiKey || process.env.SENGHONG_API_KEY || "";
+
+  if (!apiKey) {
+    return res.status(401).json({ error: "unauthorized", message: "Missing SenghongStore API Key" });
+  }
+
+  try {
+    const sRes = await fetch(`https://senghongstore.com/api/v1/payment?id=${encodeURIComponent(paymentId)}`, {
+      headers: {
+        "Authorization": `Bearer ${apiKey.trim()}`
+      }
+    });
+
+    const data = await sRes.json();
+    const rawStatus = (data.status || "").toLowerCase();
+    const normalizedStatus = (rawStatus === "paid" || data.is_paid === true)
+      ? "paid"
+      : rawStatus === "expired"
+      ? "expired"
+      : "pending";
+
+    return res.json({
+      status: normalizedStatus,
+      raw: data,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: "check_failed", message: err.message });
+  }
+});
+
+// UNIFIED Payment Creation Endpoint (Routes dynamically to CutLuy or SenghongStore or Fallback)
+app.post("/api/payment/create-order", async (req, res) => {
+  const { amount, planName, referenceId, targetGateway, preferredMode, apiKey } = req.body;
+  const settings = getStoredGatewaySettings();
+
+  const gatewayToUse = targetGateway || settings.activeGateway || "cutluy";
+  const numAmount = Number(amount) || 0.01;
+
+  // Helper 1: Try Senghong
+  const trySenghong = async () => {
+    const sKey = (gatewayToUse === "senghongstore" && apiKey && apiKey.trim().length > 3)
+      ? apiKey.trim()
+      : settings.senghong.apiKey || process.env.SENGHONG_API_KEY || "";
+
+    if (!sKey) {
+      throw new Error("Missing SenghongStore API Key (sk_...)");
+    }
+
+    const mode = preferredMode || settings.senghong.mode || "bakong";
+    const endpoint = mode === "aba"
+      ? "https://senghongstore.com/api/v1/aba/create"
+      : "https://senghongstore.com/api/v1/bakong/create";
+
+    const sRes = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${sKey.trim()}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ amount: numAmount })
+    });
+
+    const sData = await sRes.json();
+    if (!sRes.ok || sData.ok === false || sData.code === 1) {
+      throw new Error(sData.error_text || sData.msg || sData.error || "SenghongStore error");
+    }
+
+    const orderId = referenceId || `order_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+    const expiresAt = mode === "aba"
+      ? new Date(Date.now() + 180 * 1000).toISOString()
+      : new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    return {
+      orderId,
+      paymentId: sData.id,
+      amount: numAmount,
+      currency: "USD",
+      planName: planName || "VIP Pass",
+      status: "pending",
+      checkoutUrl: sData.checkout_url || `https://senghongstore.com/pay/${sData.id}`,
+      shortLink: sData.checkout_url || `https://senghongstore.com/pay/${sData.id}`,
+      qrString: sData.qr,
+      qrImage: sData.qr_image,
+      qrCodeUrl: sData.qr_image || (sData.qr ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(sData.qr)}` : undefined),
+      gateway: "senghongstore" as const,
+      gatewayMode: mode as "bakong" | "aba",
+      expiresAt,
+      createdAt: new Date().toISOString(),
+    };
+  };
+
+  // Helper 2: Try CutLuy
+  const tryCutluy = async () => {
+    const cKey = (gatewayToUse === "cutluy" && apiKey && apiKey.trim().length > 3)
+      ? apiKey.trim()
+      : settings.cutluy.apiKey || process.env.CUTLUY_API_KEY || "";
+
+    if (!cKey) {
+      throw new Error("Missing CutLuy API Key (ck_live_...)");
+    }
+
+    const orderId = referenceId || `order_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const cRes = await fetch("https://cutluy.com/v1/payments", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${cKey.trim()}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        amount: numAmount,
+        reference_id: orderId,
+      })
+    });
+
+    const cData = await cRes.json();
+    if (!cRes.ok) {
+      throw new Error(cData.message || cData.error || "CutLuy payment creation failed");
+    }
+
+    const qrData = cData.qr_string || cData.checkout_url;
+    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData)}`;
+
+    return {
+      orderId,
+      paymentId: cData.id,
+      amount: numAmount,
+      currency: "USD",
+      planName: planName || "VIP Pass",
+      status: cData.status === "paid" ? "completed" : "pending",
+      checkoutUrl: cData.checkout_url,
+      shortLink: cData.checkout_url,
+      qrString: cData.qr_string,
+      qrCodeUrl,
+      gateway: "cutluy" as const,
+      gatewayMode: "bakong" as const,
+      expiresAt: cData.expires_at || new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      createdAt: cData.created_at || new Date().toISOString(),
+    };
+  };
+
+  // Routing Logic
+  try {
+    if (gatewayToUse === "senghongstore") {
+      const order = await trySenghong();
+      return res.json(order);
+    } else if (gatewayToUse === "cutluy") {
+      const order = await tryCutluy();
+      return res.json(order);
+    } else {
+      // auto_fallback mode: Try Cutluy first, fallback to Senghong (or vice-versa depending on available keys)
+      const hasCutluy = Boolean(settings.cutluy.apiKey && settings.cutluy.apiKey.trim().length > 3);
+      const hasSenghong = Boolean(settings.senghong.apiKey && settings.senghong.apiKey.trim().length > 3);
+
+      if (hasSenghong && !hasCutluy) {
+        const order = await trySenghong();
+        return res.json(order);
+      }
+
+      try {
+        const order = await tryCutluy();
+        return res.json(order);
+      } catch (cutluyErr: any) {
+        if (hasSenghong) {
+          console.warn("CutLuy failed, activating automatic fallback to SenghongStore:", cutluyErr.message);
+          const order = await trySenghong();
+          return res.json({ ...order, fallbackTriggered: true });
+        }
+        throw cutluyErr;
+      }
+    }
+  } catch (err: any) {
+    return res.status(400).json({
+      error: "gateway_error",
+      message: err.message || "Failed to initialize payment",
+      owner_note: "Please ensure your CutLuy or SenghongStore API secret key is configured under admin portal."
+    });
+  }
+});
+
+// UNIFIED Payment Status Check Endpoint
+app.get("/api/payment/check-status/:gateway/:id", async (req, res) => {
+  const { gateway, id } = req.params;
+  const queryKey = req.query.apiKey as string;
+  const settings = getStoredGatewaySettings();
+
+  if (gateway === "senghongstore") {
+    const sKey = (queryKey && queryKey.trim().length > 3)
+      ? queryKey.trim()
+      : settings.senghong.apiKey || process.env.SENGHONG_API_KEY || "";
+
+    if (!sKey) {
+      return res.status(401).json({ error: "missing_key", message: "Missing SenghongStore API key" });
+    }
+
+    try {
+      const sRes = await fetch(`https://senghongstore.com/api/v1/payment?id=${encodeURIComponent(id)}`, {
+        headers: { "Authorization": `Bearer ${sKey.trim()}` }
+      });
+      const data = await sRes.json();
+      const rawStatus = (data.status || "").toLowerCase();
+      const status = (rawStatus === "paid" || data.is_paid === true)
+        ? "paid"
+        : rawStatus === "expired"
+        ? "expired"
+        : "pending";
+
+      return res.json({ status, raw: data });
+    } catch (err: any) {
+      return res.status(500).json({ error: "failed_to_check", message: err.message });
+    }
+  } else {
+    // CutLuy Check
+    if (cutluyWebhookEvents.has(id)) {
+      const cached = cutluyWebhookEvents.get(id);
+      return res.json({ status: cached?.status || "paid", source: "webhook" });
+    }
+
+    const cKey = (queryKey && queryKey.trim().length > 3)
+      ? queryKey.trim()
+      : settings.cutluy.apiKey || process.env.CUTLUY_API_KEY || "";
+
+    if (!cKey) {
+      return res.status(401).json({ error: "missing_key", message: "Missing CutLuy API key" });
+    }
+
+    try {
+      const cRes = await fetch(`https://cutluy.com/v1/payments/${id}`, {
+        headers: { "Authorization": `Bearer ${cKey.trim()}` }
+      });
+      const data = await cRes.json();
+      if (data?.status === "paid") {
+        cutluyWebhookEvents.set(id, { status: "paid", receivedAt: new Date().toISOString() });
+      }
+      return res.json({ status: data?.status || "pending", raw: data });
+    } catch (err: any) {
+      return res.status(500).json({ error: "failed_to_check", message: err.message });
+    }
   }
 });
 

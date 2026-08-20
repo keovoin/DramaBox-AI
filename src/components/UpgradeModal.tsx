@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { X, Crown, Check, Sparkles, ShieldCheck, CreditCard, Clock, Percent } from "lucide-react";
-import { SubscriptionPlan, UserProfile } from "../types";
+import { X, Crown, Check, Sparkles, ShieldCheck, CreditCard, Clock, Percent, Zap } from "lucide-react";
+import { SubscriptionPlan, UserProfile, PaymentGatewayType } from "../types";
+import { getPaymentGatewaySettings } from "../services/gatewayService";
 
 interface UpgradeModalProps {
   onClose: () => void;
   onUpgradeSuccess: () => void;
-  onOpenCutluyCheckout: (plan: SubscriptionPlan) => void;
+  onOpenCutluyCheckout: (plan: SubscriptionPlan, gateway?: PaymentGatewayType, mode?: "bakong" | "aba") => void;
   user?: UserProfile | null;
 }
 
@@ -44,6 +45,10 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
   user
 }) => {
   const [selectedPlanKey, setSelectedPlanKey] = useState<"weekly" | "monthly" | "yearly">("monthly");
+  
+  const savedSettings = getPaymentGatewaySettings();
+  const activeGateway = savedSettings.activeGateway === "senghongstore" ? "senghongstore" : "cutluy";
+  const activeMode = savedSettings.senghong.mode || "bakong";
 
   // Check if user currently has an active VIP subscription that hasn't expired
   const isCurrentlyVip = Boolean(
@@ -68,7 +73,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
   const handleCheckout = () => {
     const planToBuy = getPlanWithDiscount(selectedPlanKey);
     onClose();
-    onOpenCutluyCheckout(planToBuy);
+    onOpenCutluyCheckout(planToBuy, activeGateway, activeMode);
   };
 
   return (
@@ -130,7 +135,7 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
             </div>
             <div className="flex items-center gap-2">
               <Check className="w-4 h-4 text-red-500 shrink-0" />
-              <span>Cutluy Instant Checkout</span>
+              <span>Instant KHQR Activation</span>
             </div>
           </div>
 
@@ -263,13 +268,29 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
             })()}
           </div>
 
+          {/* Payment Method Notice */}
+          <div className="p-3.5 bg-[#181818] border border-white/10 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xs">
+                <CreditCard className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="text-xs font-bold text-white">Instant KHQR & Mobile Banking</p>
+                <p className="text-[10px] text-gray-400">Scan with Bakong, ABA Mobile, ACLEDA, or any Bank App</p>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+              Auto-Activation
+            </span>
+          </div>
+
           <button
             onClick={handleCheckout}
-            className="w-full bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white py-3.5 rounded-2xl font-bold text-xs shadow-xl shadow-emerald-900/40 transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-2"
+            className="w-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white py-4 rounded-2xl font-black text-xs shadow-xl shadow-emerald-950/50 transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-2"
           >
             <CreditCard className="w-4 h-4" />
             <span>
-              Pay with Cutluy Gateway ({getPlanWithDiscount(selectedPlanKey).name} - ${getPlanWithDiscount(selectedPlanKey).price.toFixed(2)})
+              Pay with KHQR • ${getPlanWithDiscount(selectedPlanKey).price.toFixed(2)}
             </span>
           </button>
         </div>
@@ -277,4 +298,5 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
     </div>
   );
 };
+
 

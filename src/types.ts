@@ -87,6 +87,20 @@ export interface CutluyPaymentConfig {
   webhookUrl: string;
 }
 
+export interface SenghongStoreConfig {
+  apiKey: string; // sk_...
+  mode: 'bakong' | 'aba'; // bakong (15 min) or aba (180 sec)
+  baseUrl: string; // https://senghongstore.com
+}
+
+export type PaymentGatewayType = 'cutluy' | 'senghongstore' | 'auto_fallback';
+
+export interface PaymentGatewaySettings {
+  activeGateway: PaymentGatewayType;
+  cutluy: CutluyPaymentConfig;
+  senghong: SenghongStoreConfig;
+}
+
 export interface CutluyOrder {
   orderId: string;
   paymentId?: string;
@@ -98,6 +112,9 @@ export interface CutluyOrder {
   shortLink?: string;
   qrCodeUrl?: string;
   qrString?: string;
+  qrImage?: string; // Direct image URL or base64 data
+  gateway?: 'cutluy' | 'senghongstore';
+  gatewayMode?: 'bakong' | 'aba';
   createdAt: string;
   expiresAt?: string;
   userId: string;
@@ -115,4 +132,5 @@ export interface SubscriptionPlan {
   popular?: boolean;
   features: string[];
 }
+
 
