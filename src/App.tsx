@@ -91,23 +91,28 @@ export default function App() {
     }
   }, [usersList]);
 
-  // Keep logged in user state synced with usersList
+  // Keep logged in user state synced when usersList changes
   useEffect(() => {
     if (!user) return;
-    const match = usersList.find((u) => u.id === user.id || u.email === user.email);
+    const match = usersList.find((u) => u.id === user.id || (u.email && u.email.toLowerCase() === user.email.toLowerCase()));
     if (match) {
       if (
         match.isBlocked !== user.isBlocked ||
         match.isVip !== user.isVip ||
         match.vipPlanName !== user.vipPlanName ||
-        match.vipExpiryDate !== user.vipExpiryDate
+        match.vipExpiryDate !== user.vipExpiryDate ||
+        match.vipExpiresAt !== user.vipExpiresAt ||
+        match.coins !== user.coins
       ) {
         setUser(match);
+        try {
+          localStorage.setItem("dramahub_user", JSON.stringify(match));
+        } catch {
+          // ignore
+        }
       }
-    } else {
-      setUsersList((prev) => [user, ...prev]);
     }
-  }, [usersList, user]);
+  }, [usersList]);
 
   const [currentTab, setCurrentTab] = useState<string>("home");
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -208,16 +213,36 @@ export default function App() {
   useEffect(() => {
     if (!user?.id) return;
 
-    // Proactively sync local changes to Firestore (e.g. VIP purchase, coins, name update)
-    syncUserProfileToFirestore(user);
-
     const userRef = doc(db, "users", user.id);
     const unsubscribe = onSnapshot(userRef, (docSnap) => {
       if (docSnap.exists()) {
-        const remoteProfile = docSnap.data() as UserProfile;
-        if (JSON.stringify(remoteProfile) !== JSON.stringify(user)) {
-          setUser(remoteProfile);
-        }
+        const raw = docSnap.data() as UserProfile;
+        const normalizedRemote: UserProfile = {
+          ...raw,
+          isVip: Boolean(raw.isVip),
+          vipPlanName: raw.isVip ? (raw.vipPlanName || undefined) : undefined,
+          vipExpiryDate: raw.isVip ? (raw.vipExpiryDate || undefined) : undefined,
+          vipExpiresAt: raw.isVip ? (raw.vipExpiresAt || undefined) : undefined,
+        };
+        setUser((prev) => {
+          if (!prev) return normalizedRemote;
+          if (
+            prev.isVip !== normalizedRemote.isVip ||
+            prev.vipPlanName !== normalizedRemote.vipPlanName ||
+            prev.vipExpiryDate !== normalizedRemote.vipExpiryDate ||
+            prev.isBlocked !== normalizedRemote.isBlocked ||
+            prev.coins !== normalizedRemote.coins ||
+            prev.name !== normalizedRemote.name
+          ) {
+            try {
+              localStorage.setItem("dramahub_user", JSON.stringify(normalizedRemote));
+            } catch {
+              // ignore
+            }
+            return normalizedRemote;
+          }
+          return prev;
+        });
       }
     }, (err) => {
       console.error("Firestore user snapshot error:", err);
@@ -275,12 +300,35 @@ export default function App() {
   const [cutluyGateway, setCutluyGateway] = useState<PaymentGatewayType>("cutluy");
   const [cutluyMode, setCutluyMode] = useState<"bakong" | "aba">("bakong");
 
-  const handleSaveProfile = (updatedProfile: UserProfile) => {
+  const handleUpdateUser = (updatedProfile: UserProfile | null) => {
     setUser(updatedProfile);
-    setUsersList((prev) =>
-      prev.map((u) => (u.id === updatedProfile.id || u.email === updatedProfile.email ? updatedProfile : u))
-    );
-    syncUserProfileToFirestore(updatedProfile);
+    if (updatedProfile) {
+      setUsersList((prev) => {
+        const index = prev.findIndex((u) => u.id === updatedProfile.id || (u.email && u.email.toLowerCase() === updatedProfile.email.toLowerCase()));
+        if (index >= 0) {
+          const next = [...prev];
+          next[index] = updatedProfile;
+          return next;
+        }
+        return [updatedProfile, ...prev];
+      });
+      syncUserProfileToFirestore(updatedProfile);
+      try {
+        localStorage.setItem("dramahub_user", JSON.stringify(updatedProfile));
+      } catch {
+        // ignore
+      }
+    } else {
+      try {
+        localStorage.removeItem("dramahub_user");
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const handleSaveProfile = (updatedProfile: UserProfile) => {
+    handleUpdateUser(updatedProfile);
     showToast("Profile & Username updated successfully!");
   };
   const [cutluyPlan, setCutluyPlan] = useState<SubscriptionPlan>({
@@ -581,13 +629,8 @@ export default function App() {
       };
     }
 
-    // Save persistently to state and localStorage for both logged in and guest users
-    setUser(updatedUser);
-    try {
-      localStorage.setItem("dramahub_user", JSON.stringify(updatedUser));
-    } catch (err) {
-      console.error("Failed to persist user profile to localStorage:", err);
-    }
+    // Save persistently to state, Firestore, and localStorage for both logged in and guest users
+    handleUpdateUser(updatedUser);
 
     const toastMsg = discountAmt > 0
       ? `🎉 VIP Extended! 20% Early Renewal Discount logged ($${discountAmt.toFixed(2)} saved). Valid until ${baseExpiry.toLocaleDateString()}`
@@ -684,7 +727,7 @@ export default function App() {
                 user={user}
                 usersList={usersList}
                 onUpdateDramas={handleUpdateDramas}
-                onUpdateUser={setUser}
+                onUpdateUser={handleUpdateUser}
                 onUpdateUsersList={handleUpdateUsersList}
                 onPreviewDrama={(drama, epNum) => handleOpenPlayer(drama, epNum || 1)}
               />
@@ -893,6 +936,29 @@ export default function App() {
           isVipMember={user?.isVip || false}
           onWatchProgress={handleWatchProgress}
           onRequestUpgrade={() => setShowUpgradeModal(true)}
+          onUpdateDramaUrl={(dramaId, episodeNumber, newUrl) => {
+            setDramas((prev) => {
+              const updatedList = prev.map((d) => {
+                if (d.id !== dramaId) return d;
+                const updatedEps = d.episodes.map((ep) =>
+                  ep.number === episodeNumber ? { ...ep, videoUrl: newUrl } : ep
+                );
+                const updatedDrama = { ...d, episodes: updatedEps };
+                syncDramaToFirestore(updatedDrama).catch(() => {});
+                if (activePlayerDrama?.id === dramaId) {
+                  setActivePlayerDrama(updatedDrama);
+                }
+                return updatedDrama;
+              });
+              try {
+                localStorage.setItem("dramahub_dramas", JSON.stringify(updatedList));
+              } catch {
+                // ignore
+              }
+              return updatedList;
+            });
+            showToast(`Episode ${episodeNumber} URL updated successfully!`);
+          }}
         />
       )}
 

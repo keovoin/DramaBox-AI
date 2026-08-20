@@ -12,7 +12,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { UserProfile } from "../types";
-import { loginWithFirebaseGoogle } from "../lib/firebase";
+import { loginWithFirebaseGoogle, syncUserProfileToFirestore } from "../lib/firebase";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -101,6 +101,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           createdAt: new Date().toISOString(),
         };
 
+        syncUserProfileToFirestore(userProfile);
         setIsLoading(false);
         onLoginSuccess(userProfile);
         onClose();
@@ -137,6 +138,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         createdAt: new Date().toISOString(),
       };
 
+      syncUserProfileToFirestore(userProfile);
       onLoginSuccess(userProfile);
       setIsLoading(false);
       onClose();
@@ -177,6 +179,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         createdAt: new Date().toISOString(),
       };
 
+      syncUserProfileToFirestore(userProfile);
       onLoginSuccess(userProfile);
       setIsLoading(false);
       onClose();

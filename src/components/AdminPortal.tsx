@@ -72,6 +72,7 @@ import {
 } from "../services/gatewayService";
 import { BulkDramaImportModal } from "./BulkDramaImportModal";
 import { MultiDramaBatchModal } from "./MultiDramaBatchModal";
+import { syncUserProfileToFirestore, deleteUserProfileFromFirestore } from "../lib/firebase";
 
 interface AdminPortalProps {
   dramas: Drama[];
@@ -112,6 +113,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     if (onUpdateUsersList) {
       onUpdateUsersList(updated);
     }
+    // Sync all modified/updated users directly to Firestore
+    updated.forEach((u) => {
+      syncUserProfileToFirestore(u);
+    });
     try {
       localStorage.setItem("dramahub_users_list", JSON.stringify(updated));
     } catch {
@@ -190,15 +195,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [adminVipUserEmail, setAdminVipUserEmail] = useState<string>(user?.email || "keovoin@gmail.com");
   const [adminVipNotice, setAdminVipNotice] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
+  // Modal State: Grant VIP duration selector (1 Week vs 1 Month vs 1 Year vs Custom)
+  const [grantVipModalUser, setGrantVipModalUser] = useState<UserProfile | null>(null);
+  const [grantVipDuration, setGrantVipDuration] = useState<"1week" | "1month" | "1year" | "custom">("1week");
+  const [customVipDays, setCustomVipDays] = useState<number>(7);
+
+  // Modal State: Revoke VIP confirmation
+  const [revokeVipConfirmUser, setRevokeVipConfirmUser] = useState<UserProfile | null>(null);
+
   const handleAdminGrantVip = (days: number, planName: string) => {
     const expiresDate = new Date();
     expiresDate.setDate(expiresDate.getDate() + days);
-    
     const formattedExpiry = `${expiresDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
     const newTx = {
       id: `tx_admin_${Date.now().toString().slice(-6)}`,
-      planName: `${planName} (Admin Grant)`,
+      planName: `${planName} (${days} Days)`,
       originalPrice: 0,
       discountAmount: 0,
       finalPrice: 0,
@@ -209,33 +221,63 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
     const targetEmail = adminVipUserEmail.trim() || user?.email || "keovoin@gmail.com";
 
-    const updatedUser: UserProfile = {
-      ...(user || {
-        id: "usr_admin",
-        name: targetEmail.split("@")[0] || "Admin",
-        email: targetEmail,
-        isVip: true,
-      }),
-      email: targetEmail,
-      isVip: true,
-      vipPlanName: planName,
-      vipExpiryDate: formattedExpiry,
-      vipExpiresAt: expiresDate.toISOString(),
-      transactions: [newTx, ...(user?.transactions || [])]
-    };
+    let userFound = false;
+    const updated = currentUsersList.map((u) => {
+      if ((u.email && u.email.toLowerCase() === targetEmail.toLowerCase()) || (user && u.id === user.id && targetEmail.toLowerCase() === user.email?.toLowerCase())) {
+        userFound = true;
+        return {
+          ...u,
+          isVip: true,
+          vipPlanName: `${planName} (${days} Days)`,
+          vipExpiryDate: formattedExpiry,
+          vipExpiresAt: expiresDate.toISOString(),
+          transactions: [newTx, ...(u.transactions || [])],
+        };
+      }
+      return u;
+    });
 
-    if (onUpdateUser) {
-      onUpdateUser(updatedUser);
-    }
-    
-    try {
-      localStorage.setItem("dramahub_user", JSON.stringify(updatedUser));
-    } catch {
-      // ignore
+    const finalUsersList: UserProfile[] = userFound ? updated : [
+      {
+        id: `usr_${Date.now()}`,
+        name: targetEmail.split("@")[0] || "User",
+        email: targetEmail,
+        authMethod: "gmail",
+        isVip: true,
+        vipPlanName: `${planName} (${days} Days)`,
+        vipExpiryDate: formattedExpiry,
+        vipExpiresAt: expiresDate.toISOString(),
+        coins: 100,
+        createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+        isBlocked: false,
+        transactions: [newTx],
+      },
+      ...updated,
+    ];
+
+    handleSyncUsers(finalUsersList);
+
+    if (user && (user.email?.toLowerCase() === targetEmail.toLowerCase() || user.id === adminVipUserEmail)) {
+      const updatedLoggedInUser: UserProfile = {
+        ...user,
+        isVip: true,
+        vipPlanName: `${planName} (${days} Days)`,
+        vipExpiryDate: formattedExpiry,
+        vipExpiresAt: expiresDate.toISOString(),
+        transactions: [newTx, ...(user.transactions || [])],
+      };
+      if (onUpdateUser) {
+        onUpdateUser(updatedLoggedInUser);
+      }
+      try {
+        localStorage.setItem("dramahub_user", JSON.stringify(updatedLoggedInUser));
+      } catch {
+        // ignore
+      }
     }
 
     setAdminVipNotice({
-      message: `Successfully granted ${planName} to ${targetEmail}! Expiry set to ${formattedExpiry}.`,
+      message: `Successfully granted ${planName} (${days} Days) to ${targetEmail}! Expiry set to ${formattedExpiry}.`,
       type: "success"
     });
 
@@ -282,14 +324,26 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     expiresDate.setDate(expiresDate.getDate() + days);
     const formattedExpiry = `${expiresDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 
+    const newTx = {
+      id: `tx_grant_${Date.now().toString().slice(-6)}`,
+      planName: `${planName} (${days} Days)`,
+      originalPrice: 0,
+      discountAmount: 0,
+      finalPrice: 0,
+      paymentGateway: "Admin Console",
+      status: "completed" as const,
+      createdAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + " Today"
+    };
+
     const updated = currentUsersList.map((u) => {
-      if (u.id === targetUser.id || (u.email && u.email === targetUser.email)) {
+      if (u.id === targetUser.id || (u.email && targetUser.email && u.email.toLowerCase() === targetUser.email.toLowerCase())) {
         return {
           ...u,
           isVip: true,
-          vipPlanName: planName,
+          vipPlanName: `${planName} (${days} Days)`,
           vipExpiryDate: formattedExpiry,
           vipExpiresAt: expiresDate.toISOString(),
+          transactions: [newTx, ...(u.transactions || [])]
         };
       }
       return u;
@@ -297,59 +351,74 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
     handleSyncUsers(updated);
 
-    if (user && (user.id === targetUser.id || (user.email && user.email === targetUser.email))) {
+    if (user && (user.id === targetUser.id || (user.email && targetUser.email && user.email.toLowerCase() === targetUser.email.toLowerCase()))) {
+      const updatedCurrentUser: UserProfile = {
+        ...user,
+        isVip: true,
+        vipPlanName: `${planName} (${days} Days)`,
+        vipExpiryDate: formattedExpiry,
+        vipExpiresAt: expiresDate.toISOString(),
+        transactions: [newTx, ...(user.transactions || [])]
+      };
       if (onUpdateUser) {
-        onUpdateUser({
-          ...user,
-          isVip: true,
-          vipPlanName: planName,
-          vipExpiryDate: formattedExpiry,
-          vipExpiresAt: expiresDate.toISOString(),
-        });
+        onUpdateUser(updatedCurrentUser);
+      }
+      try {
+        localStorage.setItem("dramahub_user", JSON.stringify(updatedCurrentUser));
+      } catch {
+        // ignore
       }
     }
 
     setUserNotice({
-      message: `Granted ${planName} (${days} Days) to ${targetUser.email || targetUser.name}.`,
+      message: `Granted ${planName} (${days} Days) to ${targetUser.email || targetUser.name}. Valid until ${formattedExpiry}.`,
       type: "success"
     });
   };
 
   const handleExecuteRevokeVip = (targetUser: UserProfile) => {
+    const revokedUser: UserProfile = {
+      ...targetUser,
+      isVip: false,
+      vipPlanName: undefined,
+      vipExpiryDate: undefined,
+      vipExpiresAt: undefined,
+    };
+
+    let userFound = false;
     const updated = currentUsersList.map((u) => {
-      if (u.id === targetUser.id || (u.email && u.email === targetUser.email)) {
-        return {
-          ...u,
-          isVip: false,
-          vipPlanName: undefined,
-          vipExpiryDate: undefined,
-          vipExpiresAt: undefined,
-        };
+      if (u.id === targetUser.id || (u.email && targetUser.email && u.email.toLowerCase() === targetUser.email.toLowerCase())) {
+        userFound = true;
+        return revokedUser;
       }
       return u;
     });
 
-    handleSyncUsers(updated);
+    const finalUsersList = userFound ? updated : [revokedUser, ...updated];
 
-    if (user && (user.id === targetUser.id || (user.email && user.email === targetUser.email))) {
+    handleSyncUsers(finalUsersList);
+    syncUserProfileToFirestore(revokedUser);
+
+    if (user && (user.id === targetUser.id || (user.email && targetUser.email && user.email.toLowerCase() === targetUser.email.toLowerCase()))) {
       if (onUpdateUser) {
-        onUpdateUser({
-          ...user,
-          isVip: false,
-          vipPlanName: undefined,
-          vipExpiryDate: undefined,
-          vipExpiresAt: undefined,
-        });
+        onUpdateUser(revokedUser);
+      }
+      try {
+        localStorage.setItem("dramahub_user", JSON.stringify(revokedUser));
+      } catch {
+        // ignore
       }
     }
 
     setUserNotice({
-      message: `Revoked VIP status for ${targetUser.email || targetUser.name}.`,
+      message: `Revoked VIP status for ${targetUser.email || targetUser.name}. Account returned to Free Tier.`,
       type: "success"
     });
+    setTimeout(() => setUserNotice(null), 5000);
   };
 
   const handleExecuteDeleteUser = (targetUserId: string, nameOrEmail: string) => {
+    deleteUserProfileFromFirestore(targetUserId);
     const updated = currentUsersList.filter((u) => u.id !== targetUserId && u.email !== targetUserId);
     handleSyncUsers(updated);
     setUserNotice({
@@ -388,28 +457,58 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   const handleAdminRevokeVip = () => {
     const targetEmail = adminVipUserEmail.trim() || user?.email || "keovoin@gmail.com";
-    if (!user) return;
-    const updatedUser: UserProfile = {
-      ...user,
+    
+    let targetUser: UserProfile | undefined = currentUsersList.find(
+      (u) => (u.email && u.email.toLowerCase() === targetEmail.toLowerCase()) || (user && u.id === user.id && targetEmail.toLowerCase() === user.email?.toLowerCase())
+    );
+
+    if (!targetUser && user && user.email?.toLowerCase() === targetEmail.toLowerCase()) {
+      targetUser = user;
+    }
+
+    const revokedUser: UserProfile = {
+      ...(targetUser || {
+        id: `usr_${Date.now()}`,
+        name: targetEmail.split("@")[0] || "User",
+        email: targetEmail,
+        authMethod: "gmail" as const,
+        coins: 100,
+        createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      }),
       isVip: false,
       vipPlanName: undefined,
       vipExpiryDate: undefined,
       vipExpiresAt: undefined,
     };
 
-    if (onUpdateUser) {
-      onUpdateUser(updatedUser);
-    }
+    let userFound = false;
+    const updated = currentUsersList.map((u) => {
+      if ((u.email && u.email.toLowerCase() === targetEmail.toLowerCase()) || (user && u.id === user.id && targetEmail.toLowerCase() === user.email?.toLowerCase())) {
+        userFound = true;
+        return revokedUser;
+      }
+      return u;
+    });
 
-    try {
-      localStorage.setItem("dramahub_user", JSON.stringify(updatedUser));
-    } catch {
-      // ignore
+    const finalUsersList = userFound ? updated : [revokedUser, ...updated];
+
+    handleSyncUsers(finalUsersList);
+    syncUserProfileToFirestore(revokedUser);
+
+    if (user && (user.email?.toLowerCase() === targetEmail.toLowerCase() || user.id === targetUser?.id || user.id === adminVipUserEmail)) {
+      if (onUpdateUser) {
+        onUpdateUser(revokedUser);
+      }
+      try {
+        localStorage.setItem("dramahub_user", JSON.stringify(revokedUser));
+      } catch {
+        // ignore
+      }
     }
 
     setAdminVipNotice({
       message: `Revoked VIP status for ${targetEmail}. Account returned to Free Tier.`,
-      type: "error"
+      type: "success"
     });
 
     setTimeout(() => setAdminVipNotice(null), 6000);
@@ -2183,23 +2282,49 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                         {/* Actions */}
                         <td className="p-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {/* VIP Grant/Revoke Quick Button */}
+                            {/* VIP Grant/Revoke Button */}
                             {usr.isVip ? (
-                              <button
-                                onClick={() => handleExecuteRevokeVip(usr)}
-                                title="Revoke VIP Access"
-                                className="px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] font-bold border border-amber-500/30 cursor-pointer"
-                              >
-                                Revoke VIP
-                              </button>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleExecuteRevokeVip(usr)}
+                                  title="1-Click Instant Remove VIP"
+                                  className="px-2.5 py-1.5 rounded-lg bg-red-600/25 hover:bg-red-600 text-red-200 hover:text-white text-[10px] font-bold border border-red-500/50 cursor-pointer flex items-center gap-1 transition-all active:scale-95 shadow-sm whitespace-nowrap"
+                                >
+                                  <XCircle className="w-3 h-3 text-red-400" />
+                                  <span>⚡ Remove VIP</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setRevokeVipConfirmUser(usr)}
+                                  title="Open Remove VIP Confirmation Modal"
+                                  className="px-2 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-[10px] font-bold border border-white/10 cursor-pointer flex items-center gap-1 transition-all"
+                                >
+                                  <Trash2 className="w-3 h-3 text-gray-400" />
+                                </button>
+                              </div>
                             ) : (
-                              <button
-                                onClick={() => handleExecuteGrantVip(usr, 30, "Monthly VIP")}
-                                title="Grant 30 Days VIP"
-                                className="px-2.5 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-[10px] font-bold border border-amber-500/30 cursor-pointer"
-                              >
-                                + Grant VIP
-                              </button>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => handleExecuteGrantVip(usr, 7, "Weekly VIP Pass")}
+                                  title="Quick 1-Click Grant 7-Day VIP"
+                                  className="px-2 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 text-[10px] font-bold border border-amber-500/40 cursor-pointer flex items-center gap-1 transition-all active:scale-95 shadow-sm whitespace-nowrap"
+                                >
+                                  <Sparkles className="w-3 h-3 text-amber-400" />
+                                  <span>⚡ 7-Day VIP</span>
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setGrantVipModalUser(usr);
+                                    setGrantVipDuration("1week");
+                                  }}
+                                  title="Grant VIP Access (Choose 7 Days, 30 Days, 1 Year, or Custom Days)"
+                                  className="px-2.5 py-1.5 rounded-lg bg-amber-600/20 hover:bg-amber-600 text-amber-300 hover:text-white text-[10px] font-bold border border-amber-500/30 cursor-pointer flex items-center gap-1 transition-all whitespace-nowrap"
+                                >
+                                  <Crown className="w-3 h-3 text-amber-400" />
+                                  <span>+ Grant VIP</span>
+                                </button>
+                              </div>
                             )}
 
                             {/* Block / Unblock Toggle Button */}
@@ -3122,6 +3247,248 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               >
                 <Ban className="w-4 h-4" />
                 <span>Confirm Block User</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Grant VIP Duration (1 Week vs 1 Month) */}
+      {grantVipModalUser && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-[#181818] border border-amber-500/30 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 relative text-xs text-gray-300">
+            <button
+              onClick={() => setGrantVipModalUser(null)}
+              className="absolute top-5 right-5 p-2 text-gray-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 text-amber-400 flex items-center justify-center shrink-0">
+                <Crown className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Grant VIP Pass</h3>
+                <p className="text-xs text-gray-400">Select subscription duration to assign.</p>
+              </div>
+            </div>
+
+            <div className="bg-white/5 p-3.5 rounded-xl border border-white/5 space-y-1.5">
+              <p className="text-gray-300 font-medium">
+                Recipient: <strong className="text-white">{grantVipModalUser.name}</strong>
+              </p>
+              <p className="text-gray-400 text-[11px] font-mono">
+                {grantVipModalUser.email || grantVipModalUser.phone || `ID: ${grantVipModalUser.id}`}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-gray-300">Select VIP Duration</label>
+              <div className="grid grid-cols-2 gap-2.5">
+                {/* 1 Week Option */}
+                <button
+                  type="button"
+                  onClick={() => setGrantVipDuration("1week")}
+                  className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                    grantVipDuration === "1week"
+                      ? "bg-amber-500/20 border-amber-500 text-white shadow-lg shadow-amber-950/40"
+                      : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <span className="font-extrabold text-sm text-white">1 Week</span>
+                    <Sparkles className={`w-4 h-4 ${grantVipDuration === "1week" ? "text-amber-400" : "text-gray-500"}`} />
+                  </div>
+                  <span className="text-[11px] text-amber-300 font-semibold">7 Days Pass</span>
+                  <span className="text-[10px] text-gray-400 mt-0.5">Short-term access</span>
+                </button>
+
+                {/* 1 Month Option */}
+                <button
+                  type="button"
+                  onClick={() => setGrantVipDuration("1month")}
+                  className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                    grantVipDuration === "1month"
+                      ? "bg-amber-500/20 border-amber-500 text-white shadow-lg shadow-amber-950/40"
+                      : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <span className="font-extrabold text-sm text-white">1 Month</span>
+                    <Crown className={`w-4 h-4 ${grantVipDuration === "1month" ? "text-amber-400" : "text-gray-500"}`} />
+                  </div>
+                  <span className="text-[11px] text-amber-300 font-semibold">30 Days Pass</span>
+                  <span className="text-[10px] text-gray-400 mt-0.5">Monthly access</span>
+                </button>
+
+                {/* 1 Year Option */}
+                <button
+                  type="button"
+                  onClick={() => setGrantVipDuration("1year")}
+                  className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                    grantVipDuration === "1year"
+                      ? "bg-amber-500/20 border-amber-500 text-white shadow-lg shadow-amber-950/40"
+                      : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <span className="font-extrabold text-sm text-white">1 Year</span>
+                    <Zap className={`w-4 h-4 ${grantVipDuration === "1year" ? "text-emerald-400" : "text-gray-500"}`} />
+                  </div>
+                  <span className="text-[11px] text-emerald-300 font-semibold">365 Days Pass</span>
+                  <span className="text-[10px] text-gray-400 mt-0.5">Annual unlimited</span>
+                </button>
+
+                {/* Custom Option */}
+                <button
+                  type="button"
+                  onClick={() => setGrantVipDuration("custom")}
+                  className={`p-3 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                    grantVipDuration === "custom"
+                      ? "bg-amber-500/20 border-amber-500 text-white shadow-lg shadow-amber-950/40"
+                      : "bg-white/5 border-white/10 text-gray-300 hover:bg-white/10"
+                  }`}
+                >
+                  <div className="flex items-center justify-between w-full mb-1">
+                    <span className="font-extrabold text-sm text-white">Custom</span>
+                    <Clock className={`w-4 h-4 ${grantVipDuration === "custom" ? "text-amber-400" : "text-gray-500"}`} />
+                  </div>
+                  <span className="text-[11px] text-amber-300 font-semibold">{customVipDays} Days</span>
+                  <span className="text-[10px] text-gray-400 mt-0.5">Enter exact days</span>
+                </button>
+              </div>
+
+              {/* Custom Days Input */}
+              {grantVipDuration === "custom" && (
+                <div className="pt-2 animate-fadeIn">
+                  <label className="block text-[11px] font-bold text-gray-400 mb-1">Number of Days to Grant:</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="3650"
+                    value={customVipDays}
+                    onChange={(e) => setCustomVipDays(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="w-full bg-[#121212] border border-amber-500/40 rounded-xl px-3 py-2 text-xs text-white font-bold focus:outline-none focus:border-amber-400"
+                    placeholder="Enter days (e.g. 7, 14, 60)"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Expiry preview */}
+            <div className="bg-[#121212] p-3 rounded-xl border border-white/5 flex items-center justify-between text-xs">
+              <span className="text-gray-400">Calculated Expiration:</span>
+              <span className="font-bold text-amber-400">
+                {(() => {
+                  const d = new Date();
+                  const daysToAdd =
+                    grantVipDuration === "1week"
+                      ? 7
+                      : grantVipDuration === "1month"
+                      ? 30
+                      : grantVipDuration === "1year"
+                      ? 365
+                      : customVipDays;
+                  d.setDate(d.getDate() + daysToAdd);
+                  return `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} (${daysToAdd} Days)`;
+                })()}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setGrantVipModalUser(null)}
+                className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-gray-300 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!grantVipModalUser) return;
+                  const days =
+                    grantVipDuration === "1week"
+                      ? 7
+                      : grantVipDuration === "1month"
+                      ? 30
+                      : grantVipDuration === "1year"
+                      ? 365
+                      : customVipDays;
+                  const planName =
+                    grantVipDuration === "1week"
+                      ? "Weekly VIP Pass"
+                      : grantVipDuration === "1month"
+                      ? "Monthly VIP Pass"
+                      : grantVipDuration === "1year"
+                      ? "Yearly VIP Pass"
+                      : `VIP Pass (${days} Days)`;
+                  handleExecuteGrantVip(grantVipModalUser, days, planName);
+                  setGrantVipModalUser(null);
+                }}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-black text-xs font-black shadow-lg shadow-amber-950/40 transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
+              >
+                <Crown className="w-4 h-4 text-black" />
+                <span>Confirm & Grant VIP</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Revoke VIP Confirmation */}
+      {revokeVipConfirmUser && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-[#181818] border border-red-500/30 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 relative text-xs text-gray-300">
+            <button
+              onClick={() => setRevokeVipConfirmUser(null)}
+              className="absolute top-5 right-5 p-2 text-gray-400 hover:text-white cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-red-600/20 border border-red-500/30 text-red-400 flex items-center justify-center shrink-0">
+                <Crown className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Remove VIP Access</h3>
+                <p className="text-xs text-gray-400">Downgrade user back to Free account status.</p>
+              </div>
+            </div>
+
+            <div className="bg-white/5 p-3.5 rounded-xl border border-white/5 space-y-1.5 text-xs">
+              <p className="text-gray-300 font-medium">
+                User: <strong className="text-white">{revokeVipConfirmUser.name}</strong> ({revokeVipConfirmUser.email || revokeVipConfirmUser.phone})
+              </p>
+              <p className="text-gray-400 text-[11px]">
+                Current VIP Plan: <span className="text-amber-300 font-bold">{revokeVipConfirmUser.vipPlanName || "Active VIP"}</span> {revokeVipConfirmUser.vipExpiryDate && `(Expires ${revokeVipConfirmUser.vipExpiryDate})`}
+              </p>
+              <p className="text-red-300/80 text-[11px] pt-1">
+                Removing VIP will revoke their instant access to all VIP-locked drama episodes immediately.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setRevokeVipConfirmUser(null)}
+                className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-gray-300 text-xs font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!revokeVipConfirmUser) return;
+                  handleExecuteRevokeVip(revokeVipConfirmUser);
+                  setRevokeVipConfirmUser(null);
+                }}
+                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-lg shadow-red-900/40 transition-transform active:scale-95 cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>Confirm Remove VIP</span>
               </button>
             </div>
           </div>

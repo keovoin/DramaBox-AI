@@ -64,10 +64,25 @@ export async function syncUserProfileToFirestore(userProfile: UserProfile): Prom
   if (!userProfile.id) return;
   const userRef = doc(db, "users", userProfile.id);
   try {
-    await setDoc(userRef, {
-      ...userProfile,
+    const cleanProfile: Record<string, any> = {
+      id: userProfile.id,
+      name: userProfile.name || "",
+      email: userProfile.email || "",
+      phone: userProfile.phone || "",
+      authMethod: userProfile.authMethod || "gmail",
+      avatarUrl: userProfile.avatarUrl || "",
+      isVip: Boolean(userProfile.isVip),
+      vipPlanName: userProfile.isVip ? (userProfile.vipPlanName || "VIP Pass") : "",
+      vipExpiresAt: userProfile.isVip ? (userProfile.vipExpiresAt || "") : "",
+      vipExpiryDate: userProfile.isVip ? (userProfile.vipExpiryDate || "") : "",
+      coins: typeof userProfile.coins === 'number' ? userProfile.coins : 0,
+      createdAt: userProfile.createdAt || new Date().toISOString(),
+      isBlocked: Boolean(userProfile.isBlocked),
+      blockedReason: userProfile.blockedReason || "",
+      transactions: userProfile.transactions || [],
       updatedAt: new Date().toISOString()
-    }, { merge: true });
+    };
+    await setDoc(userRef, cleanProfile);
   } catch (error) {
     console.error("Failed to sync user profile to Firestore:", error);
   }
@@ -79,12 +94,29 @@ export async function fetchUserProfileFromFirestore(userId: string): Promise<Use
   try {
     const snap = await getDoc(userRef);
     if (snap.exists()) {
-      return snap.data() as UserProfile;
+      const data = snap.data() as UserProfile;
+      return {
+        ...data,
+        isVip: Boolean(data.isVip),
+        vipPlanName: data.isVip ? (data.vipPlanName || undefined) : undefined,
+        vipExpiryDate: data.isVip ? (data.vipExpiryDate || undefined) : undefined,
+        vipExpiresAt: data.isVip ? (data.vipExpiresAt || undefined) : undefined,
+      };
     }
   } catch (error) {
     console.error("Failed to fetch user profile from Firestore:", error);
   }
   return null;
+}
+
+export async function deleteUserProfileFromFirestore(userId: string): Promise<void> {
+  if (!userId) return;
+  const userRef = doc(db, "users", userId);
+  try {
+    await deleteDoc(userRef);
+  } catch (error) {
+    console.error(`Failed to delete user ${userId} from Firestore:`, error);
+  }
 }
 
 // Global Drama Catalog Sync Functions
@@ -134,7 +166,14 @@ export function subscribeToUsersFromFirestore(onUpdate: (users: UserProfile[]) =
     const items: UserProfile[] = [];
     snapshot.forEach((docSnap) => {
       if (docSnap.id !== "connection_test") {
-        items.push(docSnap.data() as UserProfile);
+        const raw = docSnap.data() as UserProfile;
+        items.push({
+          ...raw,
+          isVip: Boolean(raw.isVip),
+          vipPlanName: raw.isVip ? (raw.vipPlanName || undefined) : undefined,
+          vipExpiryDate: raw.isVip ? (raw.vipExpiryDate || undefined) : undefined,
+          vipExpiresAt: raw.isVip ? (raw.vipExpiresAt || undefined) : undefined,
+        });
       }
     });
     onUpdate(items);

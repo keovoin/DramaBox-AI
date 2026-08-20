@@ -237,60 +237,87 @@ app.get("/api/proxy-stream", async (req, res) => {
     return res.status(400).json({ error: "Missing 'url' query parameter" });
   }
 
+  // Set global CORS headers for media streaming
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Range, Content-Type, Accept");
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
   try {
+    let targetOrigin = "";
+    try {
+      targetOrigin = new URL(videoUrl).origin;
+    } catch {
+      targetOrigin = "https://commondatastorage.googleapis.com";
+    }
+
     const range = req.headers.range;
     const fetchHeaders: Record<string, string> = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Referer": new URL(videoUrl).origin,
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      "Accept": "*/*",
+      "Accept-Encoding": "identity",
     };
+
+    if (targetOrigin) {
+      fetchHeaders["Referer"] = targetOrigin;
+    }
 
     if (range) {
       fetchHeaders["Range"] = range;
     }
 
     const response = await fetch(videoUrl, {
+      method: "GET",
       headers: fetchHeaders,
+      redirect: "follow",
     });
 
     if (!response.ok && response.status !== 206) {
-      return res.status(response.status).json({ error: `Upstream error: ${response.statusText}` });
+      console.warn(`Proxy upstream returned status ${response.status} for ${videoUrl}`);
+      return res.status(response.status).json({ 
+        error: `Upstream error: ${response.statusText}`, 
+        status: response.status,
+        url: videoUrl 
+      });
     }
 
-    // Forward status and essential headers
+    // Forward status and essential media headers
     res.status(response.status);
-    const contentType = response.headers.get("content-type");
+    const contentType = response.headers.get("content-type") || "video/mp4";
     const contentLength = response.headers.get("content-length");
     const contentRange = response.headers.get("content-range");
-    const acceptRanges = response.headers.get("accept-ranges");
+    const acceptRanges = response.headers.get("accept-ranges") || "bytes";
 
-    if (contentType) res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Accept-Ranges", acceptRanges);
     if (contentLength) res.setHeader("Content-Length", contentLength);
     if (contentRange) res.setHeader("Content-Range", contentRange);
-    if (acceptRanges) res.setHeader("Accept-Ranges", acceptRanges);
 
-    // Stream body
+    // Stream response chunks
     if (response.body) {
       const reader = response.body.getReader();
-      const stream = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            res.write(value);
-          }
-          res.end();
-        } catch (err) {
-          console.error("Error streaming body:", err);
-          res.end();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(value);
         }
-      };
-      stream();
+        res.end();
+      } catch (streamErr) {
+        // Stream aborted by client (e.g. user seeked or closed modal)
+        res.end();
+      }
     } else {
       res.end();
     }
   } catch (error: any) {
     console.error("Proxy stream error:", error);
-    res.status(500).json({ error: "Failed to proxy video stream", message: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to proxy video stream", message: error.message });
+    }
   }
 });
 

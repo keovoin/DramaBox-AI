@@ -3,9 +3,10 @@ import {
   X, Play, Pause, SkipForward, SkipBack, Volume2, VolumeX, 
   Maximize, Heart, Share2, Star, Lock, Smartphone, Monitor, 
   Settings2, RefreshCw, MessageCircle, Send, Check, Bookmark, Sparkles,
-  ListVideo, Grid
+  ListVideo, Grid, Edit3, ExternalLink, PlayCircle
 } from "lucide-react";
 import { Drama, Episode } from "../types";
+import { analyzeStreamUrl, getFallbackBackupStream, StreamInfo } from "../utils/streamHelper";
 
 interface VideoPlayerModalProps {
   drama: Drama;
@@ -21,6 +22,7 @@ interface VideoPlayerModalProps {
   isVipMember?: boolean;
   onWatchProgress?: (dramaId: string, epNumber: number, currentTime: number, durationSeconds: number) => void;
   onRequestUpgrade?: () => void;
+  onUpdateDramaUrl?: (dramaId: string, episodeNumber: number, newUrl: string) => void;
 }
 
 export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
@@ -35,6 +37,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   isVipMember = false,
   onWatchProgress,
   onRequestUpgrade,
+  onUpdateDramaUrl,
 }) => {
   const [currentEpNum, setCurrentEpNum] = useState<number>(initialEpisodeNumber);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -45,6 +48,7 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [autoNext, setAutoNext] = useState<boolean>(true);
   const [useProxyStream, setUseProxyStream] = useState<boolean>(false);
+  const [useBackupStream, setUseBackupStream] = useState<boolean>(false);
   const [playerMode, setPlayerMode] = useState<"vertical" | "theater">("vertical");
   const [showEpisodeDrawer, setShowEpisodeDrawer] = useState<boolean>(true);
   const [shareToast, setShareToast] = useState<string | null>(null);
@@ -52,6 +56,8 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [showEpQuickSelect, setShowEpQuickSelect] = useState<boolean>(false);
   const [showMobileCommentsSheet, setShowMobileCommentsSheet] = useState<boolean>(false);
+  const [showEditUrlModal, setShowEditUrlModal] = useState<boolean>(false);
+  const [customInputUrl, setCustomInputUrl] = useState<string>("");
 
   // Interactions initialized from drama data and local storage
   const [likesCount, setLikesCount] = useState<number>(() => {
@@ -194,22 +200,34 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
   const currentEpisode: Episode = drama.episodes.find((ep) => ep.number === currentEpNum) || drama.episodes[0];
   const isLocked = currentEpisode.isVip && !isVipMember;
 
+  // Stream analysis and URL normalization (handles Google Drive, YouTube, Vimeo, direct mp4, etc.)
+  const activeRawUrl = useBackupStream 
+    ? getFallbackBackupStream(currentEpNum)
+    : (currentEpisode.videoUrl?.trim() || getFallbackBackupStream(currentEpNum));
+    
+  const streamInfo: StreamInfo = analyzeStreamUrl(activeRawUrl);
+
+  // Video URL generator (direct vs proxy)
+  const effectiveVideoUrl = useProxyStream && !streamInfo.isEmbeddable
+    ? `/api/proxy-stream?url=${encodeURIComponent(streamInfo.url)}`
+    : streamInfo.url;
+
   // Reset error when episode or stream changes
   useEffect(() => {
     setVideoError(null);
-  }, [currentEpNum, useProxyStream]);
-
-  // Video URL generator (direct vs proxy)
-  const effectiveVideoUrl = useProxyStream
-    ? `/api/proxy-stream?url=${encodeURIComponent(currentEpisode.videoUrl)}`
-    : currentEpisode.videoUrl;
+    setUseBackupStream(false);
+  }, [currentEpNum]);
 
   const handleVideoError = () => {
-    console.warn("Video failed to load directly:", currentEpisode.videoUrl);
-    if (!useProxyStream && currentEpisode.videoUrl.startsWith("http")) {
+    console.warn("Video failed to load:", streamInfo.url);
+    if (!useProxyStream && streamInfo.url.startsWith("http") && !streamInfo.isEmbeddable) {
       setUseProxyStream(true);
-      setVideoError("Direct stream unavailable. Switched to proxy stream mode.");
+      setVideoError("Direct stream failed. Switched to proxy stream mode.");
       setTimeout(() => setVideoError(null), 4000);
+    } else if (!useBackupStream) {
+      setUseBackupStream(true);
+      setVideoError("Original video link unavailable. Switched to backup stream preview.");
+      setTimeout(() => setVideoError(null), 5000);
     } else {
       setVideoError("Unable to play video stream. Please check video URL or try another episode.");
     }
@@ -513,24 +531,83 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
                 </div>
               )}
 
-              <video
-                ref={videoRef}
-                src={isLocked ? "" : effectiveVideoUrl}
-                onLoadedMetadata={handleLoadedMetadata}
-                onTimeUpdate={handleTimeUpdate}
-                onEnded={handleVideoEnded}
-                onError={handleVideoError}
-                onClick={handlePlayPause}
-                onContextMenu={(e) => e.preventDefault()}
-                onDragStart={(e) => e.preventDefault()}
-                controlsList="nodownload noplaybackrate noremoteplayback"
-                disablePictureInPicture
-                autoPlay={!isLocked}
-                playsInline
-                // @ts-ignore
-                webkit-playsinline="true"
-                className="w-full h-full object-cover md:object-contain cursor-pointer select-none"
-              />
+              {/* Embedded Player (YouTube / Google Drive / Vimeo / Web Embeds) */}
+              {streamInfo.isEmbeddable && streamInfo.embedUrl ? (
+                <div className="w-full h-full relative flex items-center justify-center bg-black">
+                  <iframe
+                    src={streamInfo.embedUrl}
+                    title={currentEpisode.title}
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                    className="w-full h-full border-0 md:rounded-2xl"
+                  />
+                </div>
+              ) : (
+                /* Native HTML5 Video Player */
+                <video
+                  ref={videoRef}
+                  src={isLocked ? "" : effectiveVideoUrl}
+                  onLoadedMetadata={handleLoadedMetadata}
+                  onTimeUpdate={handleTimeUpdate}
+                  onEnded={handleVideoEnded}
+                  onError={handleVideoError}
+                  onClick={handlePlayPause}
+                  onContextMenu={(e) => e.preventDefault()}
+                  onDragStart={(e) => e.preventDefault()}
+                  controlsList="nodownload noplaybackrate noremoteplayback"
+                  disablePictureInPicture
+                  autoPlay={!isLocked}
+                  playsInline
+                  // @ts-ignore
+                  webkit-playsinline="true"
+                  className="w-full h-full object-cover md:object-contain cursor-pointer select-none"
+                />
+              )}
+
+              {/* Video Error Notice Overlay with Recovery Actions */}
+              {videoError && (
+                <div className="absolute top-16 left-4 right-4 bg-red-950/95 border border-red-500/60 text-white px-4 py-3 rounded-2xl shadow-2xl z-40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs backdrop-blur-md animate-fadeIn">
+                  <div className="flex items-center gap-2.5">
+                    <Sparkles className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+                    <div>
+                      <span className="font-bold text-red-200 block sm:inline">{videoError}</span>
+                      <p className="text-[11px] text-gray-300 sm:inline sm:ml-1">
+                        (Link is unreachable or blocked. Click below to stream backup or update link)
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap shrink-0">
+                    <button
+                      onClick={() => {
+                        setUseBackupStream(true);
+                        setVideoError(null);
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-xs px-3 py-1.5 rounded-xl font-bold text-white shadow-md flex items-center gap-1 cursor-pointer"
+                      title="Instantly play working demo stream for this episode"
+                    >
+                      <PlayCircle className="w-3.5 h-3.5" /> Play Backup Stream
+                    </button>
+                    {!streamInfo.isEmbeddable && (
+                      <button
+                        onClick={() => setUseProxyStream(!useProxyStream)}
+                        className="bg-white/10 hover:bg-white/20 text-xs px-2.5 py-1.5 rounded-xl font-semibold text-amber-300 border border-amber-500/30 cursor-pointer"
+                      >
+                        {useProxyStream ? "Use Direct" : "Try Proxy"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        setCustomInputUrl(currentEpisode.videoUrl || "");
+                        setShowEditUrlModal(true);
+                      }}
+                      className="bg-white/10 hover:bg-white/20 text-xs px-2.5 py-1.5 rounded-xl font-semibold text-gray-200 border border-white/20 flex items-center gap-1 cursor-pointer"
+                      title="Update episode video URL"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" /> Edit URL
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Mobile TikTok-Style Top Overlay Bar */}
               <div 
@@ -1078,6 +1155,79 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
             )}
           </div>
         </div>
+
+        {/* Edit Video URL Modal */}
+        {showEditUrlModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="bg-[#141414] border border-white/10 rounded-2xl w-full max-w-md p-5 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Edit3 className="w-5 h-5 text-red-500" />
+                  <h3 className="text-sm font-bold text-white">Edit Episode {currentEpisode.number} Video URL</h3>
+                </div>
+                <button
+                  onClick={() => setShowEditUrlModal(false)}
+                  className="p-1 rounded-full text-gray-400 hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-gray-400">
+                You can paste a direct MP4/M3U8 link, a YouTube video/embed link, or a Google Drive preview link.
+              </p>
+
+              <div>
+                <label className="text-[11px] font-semibold text-gray-300 block mb-1.5">Stream Video URL</label>
+                <input
+                  type="url"
+                  value={customInputUrl}
+                  onChange={(e) => setCustomInputUrl(e.target.value)}
+                  placeholder="https://commondatastorage.googleapis.com/... or YouTube link"
+                  className="w-full bg-black/50 border border-white/15 rounded-xl px-3 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500 font-mono"
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fallback = getFallbackBackupStream(currentEpNum);
+                    setCustomInputUrl(fallback);
+                  }}
+                  className="text-[11px] text-amber-400 hover:underline cursor-pointer"
+                >
+                  Fill Working Backup Link
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditUrlModal(false)}
+                    className="px-3 py-1.5 rounded-xl text-xs text-gray-400 hover:text-white bg-white/5 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onUpdateDramaUrl) {
+                        onUpdateDramaUrl(drama.id, currentEpisode.number, customInputUrl.trim());
+                      }
+                      currentEpisode.videoUrl = customInputUrl.trim();
+                      setUseBackupStream(false);
+                      setVideoError(null);
+                      setShowEditUrlModal(false);
+                    }}
+                    className="px-4 py-1.5 rounded-xl text-xs font-bold text-white bg-red-600 hover:bg-red-500 shadow-md cursor-pointer"
+                  >
+                    Save & Play
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
