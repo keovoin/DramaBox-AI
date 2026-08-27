@@ -11,6 +11,7 @@ import { EditProfileModal } from "./components/EditProfileModal";
 import { CutluyPaymentModal } from "./components/CutluyPaymentModal";
 import { ContinueWatching } from "./components/ContinueWatching";
 import { InstallAppPrompt } from "./components/InstallAppPrompt";
+import { PineDramaSection } from "./components/PineDramaSection";
 import { DRAMA_CATALOG } from "./data/dramas";
 import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord, PaymentGatewayType } from "./types";
 import { syncUserProfileToFirestore, subscribeToDramasFromFirestore, syncDramaToFirestore, deleteDramaFromFirestore, subscribeToUsersFromFirestore, db } from "./lib/firebase";
@@ -784,6 +785,11 @@ export default function App() {
                   isFavorite={favorites.includes(featuredDrama.id)}
                   onToggleFavorite={toggleFavorite}
                 />
+              )}
+
+              {/* PineDrama Section */}
+              {currentTab === "home" && !searchQuery && selectedCategory === "All" && (
+                <PineDramaSection />
               )}
 
               {/* Continue Watching Section on Home Tab */}
