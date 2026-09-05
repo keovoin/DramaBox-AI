@@ -10,3 +10,7 @@ coverage/
 # local test scratch
 *_test.mjs
 sdk_test.mjs
+
+# local test scratch
+admin_test.mjs
+admin_test2.mjs
