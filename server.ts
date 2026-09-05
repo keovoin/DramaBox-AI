@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import crypto from "node:crypto";
+import https from "node:https";
 import fs from "node:fs";
 import { createServer as createViteServer } from "vite";
 
@@ -1063,6 +1064,312 @@ app.post(["/webhooks/cutluy", "/api/webhooks/cutluy"], (req, res) => {
   }
 
   return res.status(200).json({ received: true, type: event?.type || "ok" });
+});
+
+// ======================= SEO / CRAWLABLE ROUTES =======================
+const FIRESTORE_PROJECT = "dramabox-ai";
+const FIRESTORE_DB = "ai-studio-dramahub-19e8f629-73b9-40e9-bfc6-37a8badaab29";
+const SITE_ORIGIN = process.env.SITE_ORIGIN || "https://urdrama.com";
+const GA_MEASUREMENT_ID = "G-EXEL0YXQK6";
+
+interface FsValue {
+  stringValue?: string;
+  integerValue?: string | number;
+  doubleValue?: number;
+  booleanValue?: boolean;
+  nullValue?: boolean;
+  arrayValue?: { values?: FsValue[] };
+  mapValue?: { fields?: Record<string, FsValue> };
+}
+interface FsDoc {
+  name: string;
+  fields?: Record<string, FsValue>;
+}
+
+function fsGet(pathname: string, timeoutMs = 6000): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      `https://firestore.googleapis.com/v1beta1/projects/${FIRESTORE_PROJECT}/databases/${FIRESTORE_DB}/${pathname}`,
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+          } else {
+            reject(new Error(`Firestore runQuery -> ${res.statusCode} :: ${data.slice(0, 300)}`));
+          }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error("Firestore timeout")));
+  });
+}
+
+function fsRunQueryAll(timeoutMs = 15000): Promise<FsDoc[]> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      structuredQuery: { from: [{ collectionId: "dramas" }], limit: 1000 },
+    });
+    const req = https.request(
+      `https://firestore.googleapis.com/v1beta1/projects/${FIRESTORE_PROJECT}/databases/${FIRESTORE_DB}/documents:runQuery`,
+      { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+            return reject(new Error(`Firestore runQuery -> ${res.statusCode} :: ${data.slice(0, 300)}`));
+          }
+          try {
+            const items: any[] = JSON.parse(data);
+            const docs: FsDoc[] = [];
+            for (const item of items) {
+              if (item.document) docs.push(item.document);
+            }
+            if (docs.length >= 1000) {
+              console.warn("SEO catalog hit the 1000-doc query cap — sitemap may be truncated; add cursor pagination");
+            }
+            resolve(docs);
+          } catch (e) { reject(e); }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error("Firestore runQuery timeout")));
+    req.write(body);
+    req.end();
+  });
+}
+
+function fsStr(v?: FsValue): string {
+  return v?.stringValue ?? "";
+}
+function fsInt(v?: FsValue): number {
+  const n = v?.integerValue ?? v?.doubleValue;
+  return typeof n === "number" ? n : parseInt(String(n ?? "0"), 10) || 0;
+}
+function fsBool(v?: FsValue): boolean {
+  return v?.booleanValue === true;
+}
+
+export interface DramaView {
+  id: string;
+  title: string;
+  synopsis: string;
+  tagline: string;
+  posterUrl: string;
+  bannerUrl: string;
+  category: string;
+  releaseYear: string;
+  rating: string;
+  tags: string[];
+  episodeCount: number;
+  firstEpisode?: { number: number; title: string; duration: string; videoUrl: string; thumbnailUrl: string };
+  updatedAt: string;
+  hidden: boolean;
+}
+
+function toDramaView(doc: FsDoc): DramaView | null {
+  const f = doc.fields || {};
+  const id = doc.name ? doc.name.split("/").pop() || "" : fsStr(f.id);
+  const title = fsStr(f.title);
+  if (!id || !title) return null;
+  const eps = f.episodes?.arrayValue?.values || [];
+  let firstEpisode: DramaView["firstEpisode"];
+  if (eps.length) {
+    const e0 = (eps[0].mapValue?.fields || {}) as Record<string, FsValue>;
+    firstEpisode = {
+      number: fsInt(e0.number) || 1,
+      title: fsStr(e0.title) || "Episode 1",
+      duration: fsStr(e0.duration),
+      videoUrl: fsStr(e0.videoUrl),
+      thumbnailUrl: fsStr(e0.thumbnailUrl) || fsStr(f.posterUrl),
+    };
+  }
+  return {
+    id,
+    title,
+    synopsis: fsStr(f.synopsis),
+    tagline: fsStr(f.tagline),
+    posterUrl: fsStr(f.posterUrl),
+    bannerUrl: fsStr(f.bannerUrl),
+    category: fsStr(f.category),
+    releaseYear: fsStr(f.releaseYear),
+    rating: fsStr(f.rating),
+    tags: f.tags?.arrayValue?.values?.map((t) => fsStr(t)).filter(Boolean) || [],
+    episodeCount: fsInt(f.episodesCount) || eps.length,
+    firstEpisode,
+    updatedAt: fsStr(f.updatedAt),
+    hidden: fsBool(f.hidden),
+  };
+}
+
+// In-memory catalog cache for sitemap/SSR (TTL 10 min)
+let seoCatalog: { at: number; items: DramaView[] } | null = null;
+const SEO_CACHE_TTL = 10 * 60 * 1000;
+
+async function getSeoCatalog(): Promise<DramaView[]> {
+  if (seoCatalog && Date.now() - seoCatalog.at < SEO_CACHE_TTL) return seoCatalog.items;
+  const docs = await fsRunQueryAll();
+  const items: DramaView[] = [];
+  for (const d of docs) {
+    const view = toDramaView(d);
+    if (view) items.push(view);
+  }
+  seoCatalog = { at: Date.now(), items };
+  return items;
+}
+
+function esc(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+function gaSnippet(): string {
+  return (
+    `<script id="Cookiebot" src="https://consent.cookiebot.com/uc.js" data-cbid="2abbde4d-b5d8-41e4-ab49-a3650602bb96" type="text/javascript" async><\/script>` +
+    `<script async src="https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}" data-cookieconsent="statistics"><\/script>` +
+    `<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','${GA_MEASUREMENT_ID}');<\/script>`
+  );
+}
+
+// --- robots.txt ---
+app.get("/robots.txt", (req, res) => {
+  res.type("text/plain").send(
+    [
+      "User-agent: *",
+      "Allow: /",
+      "Disallow: /admin",
+      "Disallow: /api/",
+      "Disallow: /webhooks/",
+      "",
+      `Sitemap: ${SITE_ORIGIN}/sitemap.xml`,
+      "",
+    ].join("\n")
+  );
+});
+
+// --- sitemap.xml ---
+app.get("/sitemap.xml", async (req, res) => {
+  try {
+    const catalog = await getSeoCatalog();
+    const today = new Date().toISOString().slice(0, 10);
+    const urls: string[] = [`  <url><loc>${SITE_ORIGIN}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>`];
+    for (const d of catalog) {
+      if (d.hidden) continue;
+      const lastmod = (d.updatedAt || "").slice(0, 10) || today;
+      urls.push(`  <url><loc>${SITE_ORIGIN}/drama/${esc(d.id)}</loc><lastmod>${esc(lastmod)}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`);
+    }
+    res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>`);
+  } catch (err: any) {
+    console.error("sitemap error:", err?.message);
+    res.status(500).type("text/plain").send("sitemap temporarily unavailable");
+  }
+});
+
+// --- per-drama SSR page: /drama/:id ---
+app.get("/drama/:id", async (req, res) => {
+  try {
+    const docId = String(req.params.id);
+    const doc = (await fsGet(`documents/dramas/${encodeURIComponent(docId)}`)) as unknown as FsDoc;
+    const d = toDramaView(doc);
+    if (!d || d.hidden) {
+      return res.status(404).type("text/plain").send("Drama not found");
+    }
+    const url = `${SITE_ORIGIN}/drama/${d.id}`;
+    const watchUrl = `${SITE_ORIGIN}/?drama=${encodeURIComponent(d.id)}&ep=1`;
+    const desc = (d.synopsis || d.tagline || `Watch ${d.title} online - free short drama series, ${d.episodeCount} episodes.`).slice(0, 155);
+    const image = d.posterUrl || `${SITE_ORIGIN}/screenshot-desktop.png`;
+    const tvSeriesLd: Record<string, unknown> = {
+      "@context": "https://schema.org",
+      "@type": "TVSeries",
+      name: d.title,
+      description: d.synopsis || desc,
+      image,
+      url,
+      numberOfEpisodes: d.episodeCount || undefined,
+      genre: d.category || "Drama",
+    };
+    if (d.releaseYear) tvSeriesLd.datePublished = d.releaseYear;
+    if (d.rating) tvSeriesLd.ratingValue = d.rating;
+    const videoObjectLd: Record<string, unknown> = {
+      "@context": "https://schema.org",
+      "@type": "VideoObject",
+      name: d.title,
+      description: desc,
+      thumbnailUrl: d.firstEpisode?.thumbnailUrl || image,
+      uploadDate: d.updatedAt || undefined,
+    };
+    if (d.firstEpisode?.videoUrl) videoObjectLd.contentUrl = d.firstEpisode.videoUrl;
+    if (d.firstEpisode?.duration) videoObjectLd.duration = d.firstEpisode.duration;
+
+    const epList = d.firstEpisode
+      ? `<p class="ep">Episode 1 is ready to stream${d.firstEpisode.duration ? ` · ${esc(d.firstEpisode.duration)}` : ""}.</p>`
+      : "";
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${esc(d.title)} - Watch Online Free | DramaHub</title>
+<meta name="description" content="${esc(desc)}" />
+<link rel="canonical" href="${esc(url)}" />
+<meta property="og:type" content="video.other" />
+<meta property="og:url" content="${esc(url)}" />
+<meta property="og:site_name" content="DramaHub" />
+<meta property="og:title" content="${esc(d.title)} - Watch Online Free" />
+<meta property="og:description" content="${esc(desc)}" />
+<meta property="og:image" content="${esc(image)}" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="${esc(d.title)} - Watch Online Free | DramaHub" />
+<meta name="twitter:description" content="${esc(desc)}" />
+<meta name="twitter:image" content="${esc(image)}" />
+${gaSnippet()}
+<script type="application/ld+json">${JSON.stringify(tvSeriesLd).replace(/</g, "\\u003c")}</script>
+<script type="application/ld+json">${JSON.stringify(videoObjectLd).replace(/</g, "\\u003c")}</script>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0b0b12; color: #f5f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 20px; }
+  .badge { display: inline-block; background: rgba(225,29,72,.15); color: #fb7185; border: 1px solid rgba(225,29,72,.4); padding: 2px 10px; border-radius: 999px; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 14px; }
+  h1 { font-size: 30px; line-height: 1.25; margin-bottom: 10px; }
+  .meta { color: #9ca3af; font-size: 14px; margin-bottom: 24px; }
+  .hero { display: flex; gap: 22px; align-items: flex-start; margin-bottom: 26px; }
+  .hero img { width: 170px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  @media (max-width: 560px) { .hero { flex-direction: column; } .hero img { width: 150px; } }
+  p.syn { color: #d1d5db; font-size: 15px; }
+  .ep { color: #9ca3af; font-size: 14px; margin-top: 10px; }
+  .cta { display: inline-block; margin-top: 26px; background: #e11d48; color: #fff; text-decoration: none; font-weight: 600; font-size: 16px; padding: 13px 28px; border-radius: 12px; transition: background .15s; }
+  .cta:hover { background: #be123c; }
+  .foot { margin-top: 34px; color: #6b7280; font-size: 12px; }
+  .foot a { color: #9ca3af; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  ${d.category ? `<span class="badge">${esc(d.category)}</span>` : ""}
+  <h1>${esc(d.title)}</h1>
+  <div class="meta">${d.releaseYear ? `<span>${esc(d.releaseYear)}</span><span> · </span>` : ""}<span>${d.episodeCount} episodes</span>${d.rating ? `<span> · ⭐ ${esc(d.rating)}</span>` : ""}</div>
+  <div class="hero">
+    <img src="${esc(image)}" alt="${esc(d.title)} poster" loading="eager" />
+    <div>
+      <p class="syn">${esc(d.synopsis || d.tagline || "Watch the full series on DramaHub.")}</p>
+      ${epList}
+    </div>
+  </div>
+  <a class="cta" href="${esc(watchUrl)}">▶ Watch Episode 1 Free</a>
+  <div class="foot">DramaHub — trending short dramas & vertical reels. <a href="${SITE_ORIGIN}/">Browse the full catalog</a>.</div>
+</div>
+</body>
+</html>`;
+    res.set("Cache-Control", "public, max-age=300, s-maxage=300");
+    res.type("html").send(html);
+  } catch (err: any) {
+    console.error("drama SSR error:", err?.message);
+    res.status(404).type("text/plain").send("Drama not found");
+  }
 });
 
 async function start() {

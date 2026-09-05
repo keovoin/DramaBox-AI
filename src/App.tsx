@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Header } from "./components/Header";
 import { HeroBanner } from "./components/HeroBanner";
@@ -350,7 +350,9 @@ export default function App() {
   };
 
   // Check URL parameters for share links (?drama=xyz&ep=2) on mount
+  const sharedLinkHandled = useRef(false);
   useEffect(() => {
+    if (sharedLinkHandled.current || dramas.length === 0) return;
     try {
       const params = new URLSearchParams(window.location.search);
       const sharedDramaId = params.get("drama");
@@ -359,6 +361,7 @@ export default function App() {
       if (sharedDramaId) {
         const found = dramas.find((d) => d.id === sharedDramaId);
         if (found) {
+          sharedLinkHandled.current = true;
           setActivePlayerDrama(found);
           setPlayerInitialEp(sharedEp);
         }
@@ -366,7 +369,7 @@ export default function App() {
     } catch (err) {
       console.error("Failed to parse shared link URL", err);
     }
-  }, []);
+  }, [dramas]);
 
   // Sync to LocalStorage
   useEffect(() => {
