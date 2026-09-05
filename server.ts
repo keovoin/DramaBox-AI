@@ -1234,6 +1234,24 @@ function gaSnippet(): string {
   );
 }
 
+// R7: per-drama og:image. Prefer the pre-rendered share card (npm run og:build),
+// fall back to the raw poster (still better than the old desktop screenshot).
+function ogImageFor(d: DramaView): string {
+  try {
+    const p = path.join(process.cwd(), "dist", "og", `${d.id}.png`);
+    if (fs.existsSync(p)) return `${SITE_ORIGIN}/og/${d.id}.png`;
+  } catch {
+    /* dev env without dist */
+  }
+  return d.posterUrl || `${SITE_ORIGIN}/screenshot-desktop.png`;
+}
+
+// R3: category landing hero (1080x1920 poster), served from /public.
+const CATEGORY_POSTERS = new Set(["action", "billionaire", "ceo", "fantasy", "historical-drama", "revenge", "romantic-drama"]);
+function categoryOgImage(slug: string, fallback: string): string {
+  return CATEGORY_POSTERS.has(slug) ? `${SITE_ORIGIN}/category-posters/${slug}.png` : fallback;
+}
+
 // --- robots.txt ---
 app.get("/robots.txt", (req, res) => {
   res.type("text/plain").send(
@@ -1261,6 +1279,12 @@ app.get("/sitemap.xml", async (req, res) => {
       const lastmod = (d.updatedAt || "").slice(0, 10) || today;
       urls.push(`  <url><loc>${SITE_ORIGIN}/drama/${esc(d.id)}</loc><lastmod>${esc(lastmod)}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>`);
     }
+    const activeCats = new Set(catalog.filter((d) => !d.hidden).map((d) => (d.category || "").toLowerCase()));
+    for (const cat of SEO_CATEGORIES) {
+      if (!activeCats.has(cat.en.toLowerCase())) continue;
+      urls.push(`  <url><loc>${SITE_ORIGIN}/category/${cat.slug}</loc><changefreq>daily</changefreq><priority>0.9</priority></url>`);
+      urls.push(`  <url><loc>${SITE_ORIGIN}/km/category/${cat.slug}</loc><changefreq>daily</changefreq><priority>0.9</priority></url>`);
+    }
     res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>`);
   } catch (err: any) {
     console.error("sitemap error:", err?.message);
@@ -1280,7 +1304,7 @@ app.get("/drama/:id", async (req, res) => {
     const url = `${SITE_ORIGIN}/drama/${d.id}`;
     const watchUrl = `${SITE_ORIGIN}/?drama=${encodeURIComponent(d.id)}&ep=1`;
     const desc = (d.synopsis || d.tagline || `Watch ${d.title} online - free short drama series, ${d.episodeCount} episodes.`).slice(0, 155);
-    const image = d.posterUrl || `${SITE_ORIGIN}/screenshot-desktop.png`;
+    const image = ogImageFor(d);
     const tvSeriesLd: Record<string, unknown> = {
       "@context": "https://schema.org",
       "@type": "TVSeries",
@@ -1298,7 +1322,7 @@ app.get("/drama/:id", async (req, res) => {
       "@type": "VideoObject",
       name: d.title,
       description: desc,
-      thumbnailUrl: d.firstEpisode?.thumbnailUrl || image,
+      thumbnailUrl: image,
       uploadDate: d.updatedAt || undefined,
     };
     if (d.firstEpisode?.videoUrl) videoObjectLd.contentUrl = d.firstEpisode.videoUrl;
@@ -1372,6 +1396,166 @@ ${gaSnippet()}
   }
 });
 
+// --- category landing pages: /category/:slug (+ /km/...) ---
+const SEO_CATEGORIES: { slug: string; en: string; km: string; blurbEn: string; blurbKm: string }[] = [
+  { slug: "billionaire", en: "Billionaire", km: "កំពូលមហាសេដ្ឋី", blurbEn: "Rich tycoons with secret identities and big dramatic deals.", blurbKm: "ពួក មេដឹកនាំ ដ៏ សម្បូរ ទៅដោយ អត្តសញ្ញាណ សម្ងាត់ និង កិច្ចព្រមព្រៀង ដ៏ គួរ ឲ្យ កត់សម្គាល់ ធំៗ" },
+  { slug: "romantic-drama", en: "Romantic Drama", km: "ភាពយន្ដរ៉ូមែនទិក", blurbEn: "Love stories, fated meetings, and slow burns.", blurbKm: "រឿងស្នេហា ការជួបជុំជោគជតារាសី និងការដុតរោលរាលយឺតៗ ។" },
+  { slug: "fantasy", en: "Fantasy", km: "ការស្រមើស្រមៃ", blurbEn: "Rebirth, magic, and gaining superpowers in other worlds.", blurbKm: "ការកើតឡើងវិញ, ចារកម្ម, និងទទួលបានអំណាចដ៏អស្ចារ្យនៅក្នុងពិភពលោកផ្សេងទៀត ។" },
+  { slug: "historical-drama", en: "Historical Drama", km: "រឿងរ៉ាវប្រវត្តិសាស្ត្រ", blurbEn: "Palaces, royal schemes, and ancient kingdoms.", blurbKm: "ព្រះបរមរាជវាំង, គម្រោង រាជ្យ, និង អាណានិគម បុរាណ ។" },
+  { slug: "action", en: "Action", km: "សកម្មភាព", blurbEn: "Fists, chases, and thrilling action.", blurbKm: "កណ្តាប់ដៃ ដេញតាម និងសកម្មភាពដ៏គួរឱ្យរំភើប ។" },
+  { slug: "ceo", en: "CEO", km: "នាយកប្រតិបត្តិ", blurbEn: "Cold CEOs, contract marriages, and boardroom romance.", blurbKm: "នាយកប្រតិបត្តិត្រជាក់, អាពាហ៍ពិពាហ៍តាមកិច្ចសន្យា, និងស្នេហាក្រុមប្រឹក្សាយោបល់ ។" },
+  { slug: "revenge", en: "Revenge", km: "សងសឹក", blurbEn: "They were betrayed. Now they return for revenge.", blurbKm: "ពួក គេ ត្រូវ គេ ក្បត់ ហើយ ឥឡូវ នេះ ពួក គេ ត្រឡប់ មក វិញ ដើម្បី សង សឹក ។" },
+];
+const KM_WATCH_FREE = "មើលដោយឥតគិតថ្លៃ";
+const KM_SERIES = "ស៊េរី";
+const KM_CATEGORY = "ប្រភេទ";
+const KM_MORE = "ច្រើនទៀត";
+
+function categoryPageHtml(cat: (typeof SEO_CATEGORIES)[number], lang: "en" | "km", dramas: DramaView[], url: string): string {
+  const isKm = lang === "km";
+  const name = isKm ? cat.km : cat.en;
+  const nameAlt = isKm ? cat.en : cat.km;
+  const count = dramas.length;
+  const title = isKm
+    ? `${cat.km} — ${KM_WATCH_FREE} ${count} ${KM_SERIES} | DramaHub`
+    : `${cat.en} Dramas — Watch ${count} Series Online Free | DramaHub`;
+  const desc = isKm ? cat.blurbKm : cat.blurbEn;
+  const hreflangKm = `${SITE_ORIGIN}/km/category/${cat.slug}`;
+  const hreflangEn = `${SITE_ORIGIN}/category/${cat.slug}`;
+  const watchUrl = `${SITE_ORIGIN}/?category=${encodeURIComponent(cat.en)}`;
+  const itemListLd = {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: isKm ? cat.km : cat.en,
+    numberOfItems: count,
+    itemListElement: dramas.map((d, i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name: d.title,
+      url: `${SITE_ORIGIN}/drama/${d.id}`,
+    })),
+  };
+  const shown = dramas.slice(0, 36);
+  const grid = shown.map((d) => {
+    const img = d.posterUrl || `${SITE_ORIGIN}/screenshot-desktop.png`;
+    return (
+      `<a class="cell" href="${SITE_ORIGIN}/drama/${esc(d.id)}">` +
+      `<img src="${esc(img)}" alt="${esc(d.title)}" loading="lazy" />` +
+      `<span class="ttl">${esc(d.title)}</span>` +
+      (d.episodeCount ? `<span class="cnt">${d.episodeCount} ep</span>` : "") +
+      `</a>`
+    );
+  }).join("\n    ");
+  const nav = SEO_CATEGORIES.map((c) =>
+    `<a href="${SITE_ORIGIN}/${isKm ? "km/" : ""}category/${c.slug}">${isKm ? c.km : c.en}</a>`
+  ).join("\n    ");
+  const more =
+    count > shown.length
+      ? `<p class="more">${isKm ? "+" + (count - shown.length) + " " + KM_MORE : "+" + (count - shown.length) + " more"} — <a href="${esc(watchUrl)}">${isKm ? "▶ " + KM_WATCH_FREE : "watch them all in the app"}</a></p>`
+      : `<p class="more"><a href="${esc(watchUrl)}">${isKm ? "▶ " + KM_WATCH_FREE : "▶ Watch all " + count + " free"}</a></p>`;
+  return `<!doctype html>
+<html lang="${lang}">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}" />
+<link rel="canonical" href="${url}" />
+<link rel="alternate" hreflang="en" href="${hreflangEn}" />
+<link rel="alternate" hreflang="km" href="${hreflangKm}" />
+<link rel="alternate" hreflang="x-default" href="${hreflangEn}" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="${url}" />
+<meta property="og:site_name" content="DramaHub" />
+<meta property="og:title" content="${esc(title)}" />
+<meta property="og:description" content="${esc(desc)}" />
+<meta property="og:image" content="${esc(categoryOgImage(cat.slug, dramas[0]?.posterUrl || `${SITE_ORIGIN}/screenshot-desktop.png`))}" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="${esc(title)}" />
+<meta name="twitter:description" content="${esc(desc)}" />
+${gaSnippet()}
+<script type="application/ld+json">${JSON.stringify(itemListLd).replace(/</g, "\\u003c")}</script>
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0b0b12; color: #f5f5f7; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Khmer", sans-serif; line-height: 1.6; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 36px 20px; }
+  .nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 26px; }
+  .nav a { color: #9ca3af; text-decoration: none; font-size: 13px; border: 1px solid #27272a; border-radius: 999px; padding: 5px 14px; }
+  .nav a:hover { color: #f5f5f7; border-color: #4b5563; }
+  .badge { display: inline-block; background: rgba(225,29,72,.15); color: #fb7185; border: 1px solid rgba(225,29,72,.4); padding: 2px 10px; border-radius: 999px; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 12px; }
+  h1 { font-size: 32px; line-height: 1.2; margin-bottom: 4px; }
+  .alt { color: #6b7280; font-size: 14px; margin-bottom: 12px; }
+  p.blurb { color: #d1d5db; font-size: 15px; max-width: 720px; margin-bottom: 26px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+  .cell { display: block; text-decoration: none; color: inherit; }
+  .cell img { width: 100%; aspect-ratio: 2/3; object-fit: cover; border-radius: 10px; background: #18181b; transition: transform .15s; }
+  .cell:hover img { transform: scale(1.03); }
+  .cell .ttl { display: block; margin-top: 8px; font-size: 13px; color: #e5e7eb; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cell .cnt { display: block; font-size: 11px; color: #6b7280; }
+  .more { margin-top: 28px; color: #9ca3af; font-size: 14px; }
+  .more a { color: #fb7185; font-weight: 600; }
+  .cta { display: inline-block; margin-top: 18px; background: #e11d48; color: #fff; text-decoration: none; font-weight: 600; font-size: 16px; padding: 13px 28px; border-radius: 12px; transition: background .15s; }
+  .cta:hover { background: #be123c; }
+  .foot { margin-top: 40px; color: #6b7280; font-size: 12px; }
+  .foot a { color: #9ca3af; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="nav">
+    ${nav}
+  </div>
+  <span class="badge">${isKm ? KM_CATEGORY : "Category"}</span>
+  <h1>${esc(name)}</h1>
+  <div class="alt">${esc(nameAlt)}</div>
+  <p class="blurb">${esc(desc)} ${isKm ? "" : `(${count} series)`}</p>
+  <div class="grid">
+    ${grid}
+  </div>
+  ${more}
+  <a class="cta" href="${esc(watchUrl)}">${isKm ? "▶ " + KM_WATCH_FREE : "▶ Watch Free in App"}</a>
+  <div class="foot">DramaHub — trending short dramas & vertical reels. <a href="${SITE_ORIGIN}/">Browse the full catalog</a>.</div>
+</div>
+</body>
+</html>`;
+}
+
+for (const cat of SEO_CATEGORIES) {
+  const handler = async (req: any, res: any, lang: "en" | "km") => {
+    try {
+      const catalog = await getSeoCatalog();
+      const dramas = catalog
+        .filter((d) => !d.hidden && (d.category || "").toLowerCase() === cat.en.toLowerCase())
+        .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+      if (dramas.length === 0) {
+        return res.status(404).type("text/plain").send("Category not found");
+      }
+      const url = `${SITE_ORIGIN}/${lang === "km" ? "km/" : ""}category/${cat.slug}`;
+      res.set("Cache-Control", "public, max-age=300, s-maxage=300");
+      res.type("html").send(categoryPageHtml(cat, lang, dramas, url));
+    } catch (err: any) {
+      console.error(`category SSR error (${lang}/${cat.slug}):`, err?.message);
+      res.status(500).type("text/plain").send("Category temporarily unavailable");
+    }
+  };
+  app.get(`/category/${cat.slug}`, (req, res) => handler(req, res, "en"));
+  app.get(`/km/category/${cat.slug}`, (req, res) => handler(req, res, "km"));
+}
+
+// unknown category slugs -> real 404 (before the SPA catch-all)
+const knownSlugs = new Set(SEO_CATEGORIES.map((c) => c.slug));
+app.get("/km/category/:slug", (req: any, res: any) => {
+  if (!knownSlugs.has(String(req.params.slug))) {
+    res.status(404).type("text/plain").send("Category not found");
+  }
+});
+app.get("/category/:slug", (req: any, res: any) => {
+  if (!knownSlugs.has(String(req.params.slug))) {
+    res.status(404).type("text/plain").send("Category not found");
+  }
+});
+
 async function start() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -1381,6 +1565,8 @@ async function start() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
+    // R7: per-drama og cards (dist/og/<id>.png) — served before the SPA catch-all
+    app.use("/og", express.static(path.join(distPath, "og"), { maxAge: "30d", immutable: true }));
     app.use(express.static(distPath));
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

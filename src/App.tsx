@@ -720,6 +720,29 @@ export default function App() {
     return matchesSearch && matchesCategory;
   });
 
+  // --- Category deep links (?category=CEO) — applied once on mount ---
+  const categoryLinkHandled = useRef(false);
+  useEffect(() => {
+    if (categoryLinkHandled.current) return;
+    categoryLinkHandled.current = true;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const c = p.get("category");
+      if (!c) return;
+      const known = ["Revenge", "CEO", "Romantic Drama", "Billionaire", "Action", "Historical Drama", "Fantasy"];
+      const norm = known.find(
+        (k) => k.toLowerCase() === c.toLowerCase() || k.toLowerCase().startsWith(c.toLowerCase()) && c.length >= 4
+      );
+      if (norm) {
+        setSelectedCategory(norm);
+        if (currentTab !== "home") setCurrentTab("home");
+      }
+    } catch {
+      /* noop */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="w-full h-screen bg-[#0a0a0a] text-gray-100 flex overflow-hidden font-sans select-none relative">
       {/* Global Toast Notification */}
