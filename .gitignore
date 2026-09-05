@@ -14,3 +14,4 @@ sdk_test.mjs
 # local test scratch
 admin_test.mjs
 admin_test2.mjs
+package-lock.json
