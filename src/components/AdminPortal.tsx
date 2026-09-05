@@ -1086,6 +1086,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             )}
           </div>
 
+          {/* Section label: Overview */}
+          <div className="flex items-center gap-3 pt-1">
+            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">Overview</h3>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
+
           {/* Top Metric Cards Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {/* 1. Active User Account */}
@@ -1163,6 +1169,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 Discounts applied: ${totalSavingsFromDiscounts.toFixed(2)}
               </p>
             </div>
+          </div>
+
+          {/* Section label: Analytics */}
+          <div className="flex items-center gap-3 pt-2">
+            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">Analytics</h3>
+            <div className="flex-1 h-px bg-white/10" />
           </div>
 
           {/* Section 3: Recharts VIP Membership Breakdown & CutLuy Order Chart */}
@@ -1258,6 +1270,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </div>
 
+          {/* Section label: Transactions */}
+          <div className="flex items-center gap-3 pt-2">
+            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">Transactions</h3>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
+
           {/* Section 3: CutLuy Real-Time Payment Audit Log Table */}
           <div className="bg-[#15151e] border border-white/15 rounded-3xl p-6 space-y-5 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
@@ -1331,6 +1349,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             </div>
           </div>
 
+          {/* Section label: Top Series */}
+          <div className="flex items-center gap-3 pt-2">
+            <h3 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500">Top Series</h3>
+            <div className="flex-1 h-px bg-white/10" />
+          </div>
+
           {/* Section 4: Most Watched Dramas Ranking */}
           <div className="bg-[#121212] border border-white/10 rounded-3xl p-6 space-y-5 shadow-xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
@@ -1345,7 +1369,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
               {[...dramas]
                 .sort((a, b) => {
                   const parseNum = (s?: string) => {
