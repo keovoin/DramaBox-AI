@@ -56,7 +56,8 @@ import {
   Mail,
   Phone,
   AlertCircle,
-  FileText
+  FileText,
+  EyeOff
 } from "lucide-react";
 import { Drama, Episode, CutluyPaymentConfig, UserProfile, PaymentGatewaySettings, PaymentGatewayType, SenghongStoreConfig } from "../types";
 import { getCutluyConfig, saveCutluyConfig, testCutluyApiKey } from "../services/cutluyService";
@@ -690,6 +691,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   // Handle Delete Drama (Custom modal confirmation)
   const handleDeleteDrama = (id: string, title: string) => {
     setDeleteConfirmDrama({ id, title });
+  };
+
+  // Toggle a drama's public visibility (hidden = not shown to visitors, still in admin)
+  const handleToggleHideDrama = (drama: Drama) => {
+    const updated = dramas.map((d) =>
+      d.id === drama.id ? { ...d, hidden: !d.hidden } : d
+    );
+    onUpdateDramas(updated);
   };
 
   const confirmExecuteDeleteDrama = () => {
@@ -2211,6 +2220,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                       {drama.title}
                     </h3>
                     <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                      {drama.hidden && (
+                        <span className="text-amber-400 font-bold">HIDDEN • </span>
+                      )}
                       {drama.category} • {drama.episodes.length} Episodes
                     </p>
                     <div className="flex items-center gap-2 mt-1.5">
@@ -2224,17 +2236,34 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                   </div>
 
                   {/* Actions */}
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDeleteDrama(drama.id, drama.title);
-                    }}
-                    className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
-                    title="Delete Series"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleHideDrama(drama);
+                      }}
+                      className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                        drama.hidden
+                          ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30"
+                          : "text-gray-500 hover:text-amber-400 hover:bg-amber-500/10"
+                      }`}
+                      title={drama.hidden ? "Hidden from visitors — click to make visible" : "Visible — click to hide from visitors"}
+                    >
+                      {drama.hidden ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteDrama(drama.id, drama.title);
+                      }}
+                      className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer"
+                      title="Delete Series"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -2267,6 +2296,18 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleHideDrama(selectedDrama)}
+                    className={`grow sm:grow-0 px-3 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer border ${
+                      selectedDrama.hidden
+                        ? "bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40"
+                        : "bg-white/10 hover:bg-white/20 text-white border-white/10"
+                    }`}
+                  >
+                    {selectedDrama.hidden ? <Eye className="w-3.5 h-3.5 text-amber-400" /> : <EyeOff className="w-3.5 h-3.5" />}
+                    <span>{selectedDrama.hidden ? "Make Visible" : "Hide"}</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => onPreviewDrama(selectedDrama, 1)}

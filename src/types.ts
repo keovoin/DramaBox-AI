@@ -22,6 +22,7 @@ export interface Drama {
   bannerUrl: string;
   featured?: boolean;
   trending?: boolean;
+  hidden?: boolean; // hidden from public catalog (still visible in admin)
   tags: string[];
   releaseYear: string;
   viewsCount: string;

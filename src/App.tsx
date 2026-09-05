@@ -686,10 +686,11 @@ export default function App() {
   // Categories list
   const categories = ["All", "Revenge", "CEO", "Romantic Drama", "Billionaire", "Action", "Historical Drama", "Fantasy"];
 
-  // Filtered Dramas logic
-  const featuredDrama = dramas.find((d) => d.featured) || dramas[0];
+  // Filtered Dramas logic (hidden dramas are excluded from all public views; admin still sees them)
+  const visibleDramas = dramas.filter((d) => !d.hidden);
+  const featuredDrama = visibleDramas.find((d) => d.featured) || visibleDramas[0];
 
-  const filteredDramas = dramas.filter((drama) => {
+  const filteredDramas = visibleDramas.filter((drama) => {
     const matchesSearch =
       drama.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       drama.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
