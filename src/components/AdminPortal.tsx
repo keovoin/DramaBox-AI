@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { 
   ResponsiveContainer, 
-  AreaChart, 
-  Area, 
   BarChart, 
   Bar, 
   PieChart, 
@@ -43,10 +41,8 @@ import {
   Users,
   PlayCircle,
   Crown,
-  TrendingUp,
   XCircle,
   Eye,
-  Activity,
   Percent,
   ArrowUpRight,
   Award,
@@ -557,29 +553,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   };
   const userWatchHistoryCount = getWatchHistoryCount();
 
-  // Recharts Dynamic Daily Platform Growth: Daily Views & New User Sign-ups
-  const daysOfWeek = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-  const totalUsersNum = currentUsersList.length;
-  
-  // Calculate daily platform growth metrics based on registered users and catalog volume
-  const dailyGrowthData = daysOfWeek.map((day, idx) => {
-    // Generate realistic daily distribution with current day being latest
-    const baseViews = Math.round(totalCatalogViewsRaw / 20) || 120;
-    const viewMultiplier = [0.8, 0.9, 0.85, 1.05, 1.2, 1.4, 1.3][idx];
-    const dailyViews = Math.round(baseViews * viewMultiplier) + (idx * 15);
-    
-    // User signups distribution based on user list
-    const baseSignups = Math.max(1, Math.round(totalUsersNum / 5));
-    const signupMultiplier = [0.7, 0.8, 1.0, 1.1, 1.3, 1.5, 1.2][idx];
-    const newSignups = Math.max(1, Math.round(baseSignups * signupMultiplier));
-    
-    return {
-      day,
-      views: dailyViews,
-      newUsers: newSignups,
-    };
-  });
-
   const vipVsFreeData = [
     { name: "Monthly VIP", value: monthlyVipCount, color: "#f43f5e" },
     { name: "Weekly VIP", value: weeklyVipCount, color: "#f59e0b" },
@@ -592,42 +565,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     { name: "Pending Orders", orders: 0, revenue: 0, color: "#f59e0b" },
     { name: "Expired / Cancelled", orders: 0, revenue: 0, color: "#ef4444" },
   ];
-
-  const userActivityTrend = [
-    { day: "Mon", activeUsers: currentUsersList.length, watchSessions: Math.max(0, userWatchHistoryCount - 3) },
-    { day: "Tue", activeUsers: currentUsersList.length, watchSessions: Math.max(0, userWatchHistoryCount - 2) },
-    { day: "Wed", activeUsers: currentUsersList.length, watchSessions: Math.max(0, userWatchHistoryCount - 2) },
-    { day: "Thu", activeUsers: currentUsersList.length, watchSessions: Math.max(0, userWatchHistoryCount - 1) },
-    { day: "Fri", activeUsers: currentUsersList.length, watchSessions: Math.max(0, userWatchHistoryCount - 1) },
-    { day: "Sat", activeUsers: currentUsersList.length, watchSessions: userWatchHistoryCount },
-    { day: "Today", activeUsers: currentUsersList.length, watchSessions: userWatchHistoryCount },
-  ];
-
-  // Top 5 Most Viewed Dramas Dataset for Recharts Bar Chart
-  const parseViewsToNum = (str?: string) => {
-    if (!str) return 0;
-    if (str.includes("M") || str.includes("m")) return parseFloat(str) * 1000000;
-    if (str.includes("K") || str.includes("k")) return parseFloat(str) * 1000;
-    return parseFloat(str) || 0;
-  };
-
-  const top5DramasChartData = [...dramas]
-    .sort((a, b) => parseViewsToNum(b.viewsCount) - parseViewsToNum(a.viewsCount))
-    .slice(0, 5)
-    .map((d, index) => {
-      const val = parseViewsToNum(d.viewsCount);
-      const shortTitle = d.title.length > 16 ? d.title.substring(0, 14) + "..." : d.title;
-      const barColors = ["#ef4444", "#f97316", "#f59e0b", "#a855f7", "#3b82f6"];
-      return {
-        rank: `#${index + 1}`,
-        title: shortTitle,
-        fullTitle: d.title,
-        views: val,
-        formattedViews: d.viewsCount || `${val}`,
-        category: d.category || "Drama",
-        color: barColors[index % barColors.length],
-      };
-    });
 
   // Bulk episode paste state
   const [showBulkPaste, setShowBulkPaste] = useState<boolean>(false);
@@ -1225,234 +1162,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
               <p className="text-xs text-gray-400">
                 Discounts applied: ${totalSavingsFromDiscounts.toFixed(2)}
               </p>
-            </div>
-          </div>
-
-          {/* Chart Section 1: Daily Views & New User Sign-ups Platform Growth (Recharts) */}
-          <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 shadow-xl min-w-0">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
-              <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-emerald-400" /> Platform Growth: Daily Views & New User Sign-ups
-                </h3>
-                <p className="text-xs text-gray-300 mt-0.5">
-                  Track daily episode viewership and new user account registrations to monitor platform adoption
-                </p>
-              </div>
-              <div className="flex items-center gap-4 text-xs font-semibold">
-                <span className="flex items-center gap-1.5 text-cyan-300">
-                  <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" /> Daily Views
-                </span>
-                <span className="flex items-center gap-1.5 text-emerald-300">
-                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" /> New Sign-ups
-                </span>
-              </div>
-            </div>
-
-            <div className="h-64 sm:h-72 w-full pt-2 min-w-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={dailyGrowthData} margin={{ top: 10, right: 15, left: -15, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorDailyViews" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.45}/>
-                      <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorNewUsers" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.45}/>
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2a36" />
-                  <XAxis dataKey="day" stroke="#a1a1aa" fontSize={11} tickLine={false} />
-                  <YAxis stroke="#a1a1aa" fontSize={11} tickLine={false} allowDecimals={false} />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: "#1e1e2d", 
-                      borderColor: "#3f3f46", 
-                      borderRadius: "14px", 
-                      color: "#ffffff", 
-                      fontSize: "12px", 
-                      fontWeight: "bold",
-                      boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.5)"
-                    }} 
-                  />
-                  <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: "11px", color: "#d4d4d8", paddingBottom: "10px" }} />
-                  <Area 
-                    type="monotone" 
-                    dataKey="views" 
-                    stroke="#06b6d4" 
-                    strokeWidth={2.5} 
-                    fillOpacity={1} 
-                    fill="url(#colorDailyViews)" 
-                    name="Daily Views" 
-                  />
-                  <Area 
-                    type="monotone" 
-                    dataKey="newUsers" 
-                    stroke="#10b981" 
-                    strokeWidth={2.5} 
-                    fillOpacity={1} 
-                    fill="url(#colorNewUsers)" 
-                    name="New User Sign-ups" 
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Quick Summary Cards below chart */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-white/10">
-              <div className="bg-white/5 p-3 rounded-2xl border border-white/10">
-                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">7-Day Total Views</span>
-                <p className="text-base font-black text-cyan-400 mt-0.5">
-                  {dailyGrowthData.reduce((sum, d) => sum + d.views, 0).toLocaleString()}
-                </p>
-              </div>
-              <div className="bg-white/5 p-3 rounded-2xl border border-white/10">
-                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">7-Day New Sign-ups</span>
-                <p className="text-base font-black text-emerald-400 mt-0.5">
-                  +{dailyGrowthData.reduce((sum, d) => sum + d.newUsers, 0)} users
-                </p>
-              </div>
-              <div className="bg-white/5 p-3 rounded-2xl border border-white/10">
-                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Total Registered</span>
-                <p className="text-base font-black text-purple-400 mt-0.5">
-                  {currentUsersList.length} accounts
-                </p>
-              </div>
-              <div className="bg-white/5 p-3 rounded-2xl border border-white/10">
-                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider block">Avg Daily Growth</span>
-                <p className="text-base font-black text-amber-400 mt-0.5">
-                  +{(dailyGrowthData.reduce((sum, d) => sum + d.newUsers, 0) / 7).toFixed(1)} / day
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Chart Section 2: User Growth & Streaming Session Trend */}
-          <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-4 shadow-xl min-w-0">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
-              <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <TrendingUp className="w-5 h-5 text-red-500" /> Active Streaming Sessions & Viewership Trend
-                </h3>
-                <p className="text-xs text-gray-300 mt-0.5">Real-time user streaming sessions calculated from active app usage</p>
-              </div>
-              <div className="flex items-center gap-4 text-xs font-semibold">
-                <span className="flex items-center gap-1.5 text-purple-300">
-                  <span className="w-2.5 h-2.5 rounded-full bg-purple-500" /> Active User Sessions
-                </span>
-                <span className="flex items-center gap-1.5 text-amber-300">
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Episode Views
-                </span>
-              </div>
-            </div>
-
-            <div className="h-60 sm:h-72 w-full pt-2 min-w-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={userActivityTrend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorDau" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#a855f7" stopOpacity={0.5}/>
-                      <stop offset="95%" stopColor="#a855f7" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorViews" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.5}/>
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2a36" />
-                  <XAxis dataKey="day" stroke="#a1a1aa" fontSize={10} tickLine={false} />
-                  <YAxis stroke="#a1a1aa" fontSize={10} tickLine={false} allowDecimals={false} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: "#1e1e2d", borderColor: "#3f3f46", borderRadius: "12px", color: "#ffffff", fontSize: "12px", fontWeight: "bold" }} 
-                  />
-                  <Area type="monotone" dataKey="activeUsers" stroke="#a855f7" strokeWidth={2.5} fillOpacity={1} fill="url(#colorDau)" name="Active Users" />
-                  <Area type="monotone" dataKey="watchSessions" stroke="#f59e0b" strokeWidth={2.5} fillOpacity={1} fill="url(#colorViews)" name="Episode Watch Sessions" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* Section 2: Recharts Top 5 Most Viewed Dramas Bar Chart */}
-          <div className="bg-[#15151e] border border-white/15 rounded-2xl sm:rounded-3xl p-4 sm:p-6 space-y-5 shadow-xl min-w-0">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 pb-4">
-              <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5 text-red-500" /> Top 5 Most Viewed Dramas Dashboard
-                </h3>
-                <p className="text-xs text-gray-300 mt-0.5">Real-time viewership metrics ranking top series in catalog</p>
-              </div>
-              <span className="text-xs font-bold text-red-400 bg-red-500/20 px-3 py-1 rounded-xl border border-red-500/30 flex items-center gap-1.5 w-fit">
-                <Sparkles className="w-3.5 h-3.5" /> Total Views: {formattedCatalogViews}
-              </span>
-            </div>
-
-            <div className="h-60 sm:h-72 w-full pt-2 min-w-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={top5DramasChartData}
-                  margin={{ top: 10, right: 10, left: -20, bottom: 20 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2a36" />
-                  <XAxis
-                    dataKey="title"
-                    stroke="#a1a1aa"
-                    fontSize={10}
-                    tickLine={false}
-                    interval={0}
-                  />
-                  <YAxis
-                    stroke="#a1a1aa"
-                    fontSize={10}
-                    tickLine={false}
-                    tickFormatter={(val) =>
-                      val >= 1000000
-                        ? `${(val / 1000000).toFixed(1)}M`
-                        : val >= 1000
-                        ? `${(val / 1000).toFixed(0)}k`
-                        : val
-                    }
-                  />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        const data = payload[0].payload;
-                        return (
-                          <div className="bg-[#1e1e2d] border border-white/20 p-3 rounded-2xl shadow-xl space-y-1">
-                            <p className="text-xs font-bold text-white">{data.fullTitle}</p>
-                            <p className="text-[11px] text-gray-400">
-                              Category: <span className="text-amber-400 font-semibold">{data.category}</span>
-                            </p>
-                            <p className="text-xs font-black text-red-400">Total Views: {data.formattedViews}</p>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <Bar dataKey="views" name="Views" radius={[8, 8, 0, 0]}>
-                    {top5DramasChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* Top 5 Badges / Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5 pt-2 border-t border-white/10">
-              {top5DramasChartData.map((d, i) => (
-                <div key={i} className="p-2.5 sm:p-3 rounded-2xl bg-white/5 border border-white/10 flex flex-col justify-between">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-[10px] font-black px-2 py-0.5 rounded-md text-white" style={{ backgroundColor: d.color }}>
-                      {d.rank}
-                    </span>
-                    <span className="text-[10px] font-semibold text-gray-400 truncate">{d.category}</span>
-                  </div>
-                  <p className="text-xs font-bold text-white truncate mt-2" title={d.fullTitle}>{d.fullTitle}</p>
-                  <p className="text-[11px] font-black text-red-400 mt-0.5">{d.formattedViews} views</p>
-                </div>
-              ))}
             </div>
           </div>
 
