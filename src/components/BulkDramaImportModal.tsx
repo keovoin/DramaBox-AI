@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Upload,
   FileText,
@@ -11,11 +11,11 @@ import {
   X,
   Plus,
   Layers,
-  Film,
   Sparkles,
   RefreshCw,
-  Eye,
-  Trash2
+  ChevronLeft,
+  ChevronRight,
+  GitMerge,
 } from "lucide-react";
 import { Drama } from "../types";
 import {
@@ -25,13 +25,31 @@ import {
   downloadJsonTemplate,
   CSV_DRAMA_TEMPLATE,
   JSON_DRAMA_TEMPLATE,
-  ParseResult
+  ParseResult,
 } from "../utils/dramaBulkParser";
+import { cn } from "../lib/cn";
+import {
+  Button,
+  Badge,
+  Card,
+  ScrollArea,
+  SegmentedControl,
+} from "./ui";
+
+const PAGE_SIZE = 12;
+
+const normalizeTitle = (t: string) =>
+  t
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 
 interface BulkDramaImportModalProps {
   isOpen: boolean;
   onClose: () => void;
   existingDramasCount: number;
+  /** Normalized titles already in the catalog — used for auto-dedupe. */
+  existingTitles?: string[];
   onImportDramas: (importedDramas: Drama[], mode: "append" | "replace") => void;
 }
 
@@ -39,6 +57,7 @@ export const BulkDramaImportModal: React.FC<BulkDramaImportModalProps> = ({
   isOpen,
   onClose,
   existingDramasCount,
+  existingTitles,
   onImportDramas,
 }) => {
   const [activeTab, setActiveTab] = useState<"file" | "paste">("file");
@@ -49,20 +68,25 @@ export const BulkDramaImportModal: React.FC<BulkDramaImportModalProps> = ({
   const [selectedDramaIds, setSelectedDramaIds] = useState<string[]>([]);
   const [importMode, setImportMode] = useState<"append" | "replace">("append");
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [copiedTemplate, setCopiedTemplate] = useState<"csv" | "json" | null>(null);
+  const [copiedTemplate, setCopiedTemplate] = useState<"csv" | "json" | null>(
+    null
+  );
+  const [page, setPage] = useState(1);
+  const [fileInputRef] = useState(() => ({ current: null as HTMLInputElement | null }));
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const existingTitleSet = useMemo(
+    () => new Set((existingTitles || []).map(normalizeTitle)),
+    [existingTitles]
+  );
+  const hasExisting = existingTitleSet.size > 0;
 
-  if (!isOpen) return null;
+  const isDuplicate = (d: Drama) =>
+    hasExisting && existingTitleSet.has(normalizeTitle(d.title));
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const handleReadFile = (file: File) => {
     setSelectedFileName(file.name);
     const isJson = file.name.endsWith(".json") || file.type.includes("json");
     setFileType(isJson ? "json" : "csv");
-
     const reader = new FileReader();
     reader.onload = (event) => {
       const text = (event.target?.result as string) || "";
@@ -70,44 +94,38 @@ export const BulkDramaImportModal: React.FC<BulkDramaImportModalProps> = ({
       processParsing(text, isJson ? "json" : "csv");
     };
     reader.readAsText(file);
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleReadFile(file);
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-
-    setSelectedFileName(file.name);
-    const isJson = file.name.endsWith(".json") || file.type.includes("json");
-    setFileType(isJson ? "json" : "csv");
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = (event.target?.result as string) || "";
-      setRawText(text);
-      processParsing(text, isJson ? "json" : "csv");
-    };
-    reader.readAsText(file);
+    if (file) handleReadFile(file);
   };
 
   const processParsing = (content: string, type: "csv" | "json") => {
     setIsProcessing(true);
+    setPage(1);
     setTimeout(() => {
-      let result: ParseResult;
-      if (type === "csv") {
-        result = parseDramasFromCsv(content);
-      } else {
-        result = parseDramasFromJson(content);
-      }
+      const result =
+        type === "csv"
+          ? parseDramasFromCsv(content)
+          : parseDramasFromJson(content);
       setParseResult(result);
-      setSelectedDramaIds(result.dramas.map((d) => d.id));
+      // Default: select everything unless it already exists in the catalog
+      // (title-based auto-dedupe). Duplicates stay selectable on purpose.
+      setSelectedDramaIds(
+        result.dramas.filter((d) => !isDuplicate(d)).map((d) => d.id)
+      );
       setIsProcessing(false);
     }, 150);
   };
 
-  const handleManualParse = () => {
-    processParsing(rawText, fileType);
-  };
+  const handleManualParse = () => processParsing(rawText, fileType);
 
   const handleToggleDramaSelection = (id: string) => {
     setSelectedDramaIds((prev) =>
@@ -125,361 +143,411 @@ export const BulkDramaImportModal: React.FC<BulkDramaImportModalProps> = ({
   };
 
   const handleCopyTemplate = (type: "csv" | "json") => {
-    const template = type === "csv" ? CSV_DRAMA_TEMPLATE : JSON_DRAMA_TEMPLATE;
-    navigator.clipboard.writeText(template);
+    navigator.clipboard.writeText(
+      type === "csv" ? CSV_DRAMA_TEMPLATE : JSON_DRAMA_TEMPLATE
+    );
     setCopiedTemplate(type);
     setTimeout(() => setCopiedTemplate(null), 2500);
   };
 
   const handleExecuteImport = () => {
     if (!parseResult || selectedDramaIds.length === 0) return;
-    const dramasToImport = parseResult.dramas.filter((d) => selectedDramaIds.includes(d.id));
+    const dramasToImport = parseResult.dramas.filter((d) =>
+      selectedDramaIds.includes(d.id)
+    );
     onImportDramas(dramasToImport, importMode);
     onClose();
   };
 
+  const totalPages = parseResult
+    ? Math.max(1, Math.ceil(parseResult.dramas.length / PAGE_SIZE))
+    : 1;
+  const pageDramas = parseResult
+    ? parseResult.dramas.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+    : [];
+  const duplicateCount = parseResult
+    ? parseResult.dramas.filter(isDuplicate).length
+    : 0;
+
+  // Guard must come after ALL hooks (rules of hooks)
+  if (!isOpen) return null;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
-      <div className="bg-[#121212] border border-white/15 rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-md animate-fadeIn">
+      <Card className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden border-white/15 bg-ink-900 animate-scale-in">
         {/* Header */}
-        <div className="p-5 sm:p-6 border-b border-white/10 flex items-center justify-between bg-[#161616]">
+        <div className="flex items-center justify-between border-b border-white/10 bg-ink-800/60 p-5 sm:p-6">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-red-600/20 text-red-500 flex items-center justify-center border border-red-500/30">
-              <Layers className="w-5 h-5" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-brand-500/30 bg-brand-600/20 text-brand-400">
+              <Layers className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-black text-white flex items-center gap-2">
+              <h2 className="flex items-center gap-2 text-base font-black text-white sm:text-lg">
                 Bulk Drama Catalog Import
-                <span className="text-[11px] font-bold bg-white/10 text-gray-300 px-2 py-0.5 rounded-full">
-                  CSV & JSON Parser
-                </span>
+                <Badge variant="indigo">CSV &amp; JSON</Badge>
               </h2>
-              <p className="text-xs text-gray-400">
-                Upload or paste multiple drama series entries at once to populate your catalog.
+              <p className="text-xs text-zinc-400">
+                Upload or paste multiple series at once — duplicates are
+                detected automatically by title.
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/15 text-gray-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+            <X className="h-4 w-4" />
+          </Button>
         </div>
 
-        {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6 custom-scrollbar">
-          {/* Top Row: Template Download & Format Guide */}
-          <div className="bg-[#181822] border border-indigo-500/30 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <h3 className="text-xs font-black text-indigo-300 uppercase tracking-wider flex items-center gap-1.5">
-                <FileCode className="w-4 h-4 text-indigo-400" /> Standard Bulk Templates
-              </h3>
-              <p className="text-xs text-gray-300">
-                Download a pre-formatted template with sample drama columns, episodes, and stream links.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={downloadCsvTemplate}
-                className="px-3 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download CSV (.csv)</span>
-              </button>
-              <button
-                onClick={downloadJsonTemplate}
-                className="px-3 py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download JSON (.json)</span>
-              </button>
-              <button
-                onClick={() => handleCopyTemplate("csv")}
-                className="px-2.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-                title="Copy sample CSV"
-              >
-                {copiedTemplate === "csv" ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedTemplate === "csv" ? "Copied!" : "Copy CSV"}</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Tab Selector: Upload File vs Raw Text */}
-          <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-            <button
-              onClick={() => setActiveTab("file")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-                activeTab === "file"
-                  ? "bg-red-600 text-white shadow-md shadow-red-900/30"
-                  : "bg-white/5 text-gray-400 hover:text-white"
-              }`}
-            >
-              <Upload className="w-4 h-4" />
-              <span>Upload CSV / JSON File</span>
-            </button>
-            <button
-              onClick={() => setActiveTab("paste")}
-              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
-                activeTab === "paste"
-                  ? "bg-red-600 text-white shadow-md shadow-red-900/30"
-                  : "bg-white/5 text-gray-400 hover:text-white"
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              <span>Direct Text Paste</span>
-            </button>
-          </div>
-
-          {/* Mode 1: File Upload Dropzone */}
-          {activeTab === "file" && (
-            <div
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-white/20 hover:border-red-500/50 bg-[#161616] hover:bg-[#1a1a1a] rounded-3xl p-8 sm:p-10 text-center space-y-4 cursor-pointer transition-all group"
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv,.json,.txt"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              <div className="w-16 h-16 rounded-2xl bg-white/5 group-hover:bg-red-600/20 text-gray-400 group-hover:text-red-500 flex items-center justify-center mx-auto transition-colors">
-                <Upload className="w-8 h-8" />
+        {/* Body */}
+        <ScrollArea className="flex-1 p-5 sm:p-6">
+          <div className="space-y-6">
+            {/* Templates */}
+            <Card className="border-indigo-500/30 bg-ink-800/60">
+              <div className="flex flex-col justify-between gap-4 p-4 sm:flex-row sm:items-center sm:p-5">
+                <div className="space-y-1">
+                  <h3 className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wider text-indigo-300">
+                    <FileCode className="h-4 w-4 text-indigo-400" /> Standard
+                    Bulk Templates
+                  </h3>
+                  <p className="text-xs text-zinc-400">
+                    Download a pre-formatted template with sample drama columns,
+                    episodes, and stream links.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={downloadCsvTemplate}
+                    className="border-emerald-500/40 text-emerald-300 hover:bg-emerald-600/20"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>CSV</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={downloadJsonTemplate}
+                    className="border-blue-500/40 text-blue-300 hover:bg-blue-600/20"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    <span>JSON</span>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleCopyTemplate("csv")}
+                  >
+                    {copiedTemplate === "csv" ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                    <span>{copiedTemplate === "csv" ? "Copied!" : "Copy CSV"}</span>
+                  </Button>
+                </div>
               </div>
-              <div className="space-y-1">
-                <p className="text-sm font-bold text-white">
+            </Card>
+
+            {/* Source tabs */}
+            <SegmentedControl
+              options={[
+                { value: "file", label: "Upload CSV / JSON File", icon: <Upload className="h-3.5 w-3.5" /> },
+                { value: "paste", label: "Direct Text Paste", icon: <FileText className="h-3.5 w-3.5" /> },
+              ]}
+              value={activeTab}
+              onChange={setActiveTab}
+            />
+
+            {/* File dropzone */}
+            {activeTab === "file" && (
+              <div
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className="group cursor-pointer rounded-3xl border-2 border-dashed border-white/20 bg-ink-800/60 p-8 text-center transition-all hover:border-brand-500/50 hover:bg-ink-800 sm:p-10"
+              >
+                <input
+                  ref={(el) => {
+                    fileInputRef.current = el;
+                  }}
+                  type="file"
+                  accept=".csv,.json,.txt"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-white/5 text-zinc-400 transition-colors group-hover:bg-brand-600/20 group-hover:text-brand-400">
+                  <Upload className="h-8 w-8" />
+                </div>
+                <p className="mt-4 text-sm font-bold text-white">
                   {selectedFileName ? (
-                    <span className="text-emerald-400 font-mono">{selectedFileName}</span>
+                    <span className="font-mono text-emerald-400">{selectedFileName}</span>
                   ) : (
                     "Click to browse or drag & drop CSV or JSON file here"
                   )}
                 </p>
-                <p className="text-xs text-gray-400">
-                  Supports .csv (with headers & pipe-separated video URLs) or .json array of dramas
+                <p className="mt-1 text-xs text-zinc-400">
+                  Supports .csv (with headers &amp; pipe-separated video URLs) or
+                  .json array of dramas
                 </p>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Mode 2: Direct Raw Text Paste */}
-          {activeTab === "paste" && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-gray-300">
-                  Paste Raw CSV or JSON Content:
-                </label>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-400">Format:</span>
-                  <button
-                    type="button"
-                    onClick={() => setFileType("csv")}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
-                      fileType === "csv" ? "bg-emerald-600 text-white" : "bg-white/10 text-gray-400"
-                    }`}
-                  >
-                    CSV
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFileType("json")}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-bold ${
-                      fileType === "json" ? "bg-blue-600 text-white" : "bg-white/10 text-gray-400"
-                    }`}
-                  >
-                    JSON
-                  </button>
+            {/* Paste mode */}
+            {activeTab === "paste" && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-zinc-300">
+                    Paste Raw CSV or JSON Content:
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-400">Format:</span>
+                    <SegmentedControl
+                      size="sm"
+                      options={[
+                        { value: "csv", label: "CSV" },
+                        { value: "json", label: "JSON" },
+                      ]}
+                      value={fileType}
+                      onChange={setFileType}
+                    />
+                  </div>
                 </div>
+                <textarea
+                  value={rawText}
+                  onChange={(e) => setRawText(e.target.value)}
+                  placeholder={fileType === "csv" ? CSV_DRAMA_TEMPLATE : JSON_DRAMA_TEMPLATE}
+                  rows={8}
+                  className="custom-scrollbar w-full rounded-xl border border-white/15 bg-ink-800 p-4 font-mono text-xs text-white placeholder:text-zinc-600 focus:border-brand-500/70 focus:outline-none focus:ring-2 focus:ring-brand-500/25"
+                />
+                <Button
+                  onClick={handleManualParse}
+                  disabled={!rawText.trim()}
+                  className="self-start"
+                >
+                  <Sparkles className="h-4 w-4" />
+                  <span>Parse Content</span>
+                </Button>
               </div>
-              <textarea
-                value={rawText}
-                onChange={(e) => setRawText(e.target.value)}
-                placeholder={fileType === "csv" ? CSV_DRAMA_TEMPLATE : JSON_DRAMA_TEMPLATE}
-                rows={8}
-                className="w-full bg-[#161616] border border-white/15 rounded-2xl p-4 text-xs font-mono text-white placeholder-gray-600 focus:outline-none focus:border-red-500 custom-scrollbar"
-              />
-              <button
-                type="button"
-                onClick={handleManualParse}
-                disabled={!rawText.trim()}
-                className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>Parse Content</span>
-              </button>
-            </div>
-          )}
+            )}
 
-          {/* Parse Result Feedback & Live Dramas List */}
-          {isProcessing && (
-            <div className="py-8 text-center space-y-2">
-              <RefreshCw className="w-8 h-8 text-red-500 animate-spin mx-auto" />
-              <p className="text-xs font-bold text-white">Analyzing & validating drama catalog...</p>
-            </div>
-          )}
+            {/* Processing */}
+            {isProcessing && (
+              <div className="space-y-2 py-8 text-center">
+                <RefreshCw className="mx-auto h-8 w-8 animate-spin text-brand-500" />
+                <p className="text-xs font-bold text-white">
+                  Analyzing &amp; validating drama catalog...
+                </p>
+              </div>
+            )}
 
-          {parseResult && (
-            <div className="space-y-4 pt-2">
-              {/* Errors Display */}
-              {parseResult.errors.length > 0 && (
-                <div className="p-4 rounded-2xl bg-red-950/40 border border-red-500/40 text-xs text-red-300 space-y-1">
-                  <div className="flex items-center gap-2 font-bold text-red-400">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>Parsing Errors Encountered:</span>
+            {/* Parse result */}
+            {parseResult && (
+              <div className="space-y-4 pt-2">
+                {parseResult.errors.length > 0 && (
+                  <div className="space-y-1 rounded-2xl border border-red-500/40 bg-red-950/40 p-4 text-xs text-red-300">
+                    <div className="flex items-center gap-2 font-bold text-red-400">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>Parsing Errors Encountered:</span>
+                    </div>
+                    <ul className="list-disc space-y-1 pl-5">
+                      {parseResult.errors.map((err, i) => (
+                        <li key={i}>{err}</li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="list-disc pl-5 space-y-1 text-red-300">
-                    {parseResult.errors.map((err, i) => (
-                      <li key={i}>{err}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                )}
 
-              {/* Warnings Display */}
-              {parseResult.warnings.length > 0 && (
-                <div className="p-4 rounded-2xl bg-amber-950/30 border border-amber-500/30 text-xs text-amber-300 space-y-1">
-                  <div className="flex items-center gap-2 font-bold text-amber-400">
-                    <AlertCircle className="w-4 h-4 shrink-0" />
-                    <span>Warnings ({parseResult.warnings.length}):</span>
+                {parseResult.warnings.length > 0 && (
+                  <div className="space-y-1 rounded-2xl border border-amber-500/30 bg-amber-950/30 p-4 text-xs text-amber-300">
+                    <div className="flex items-center gap-2 font-bold text-amber-400">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>Warnings ({parseResult.warnings.length}):</span>
+                    </div>
+                    <ul className="custom-scrollbar list-disc max-h-24 space-y-1 overflow-y-auto pl-5 text-amber-300/90">
+                      {parseResult.warnings.map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="list-disc pl-5 space-y-1 text-amber-300/90 max-h-24 overflow-y-auto custom-scrollbar">
-                    {parseResult.warnings.map((w, i) => (
-                      <li key={i}>{w}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                )}
 
-              {/* Parsed Dramas Table */}
-              {parseResult.dramas.length > 0 && (
-                <div className="bg-[#161616] border border-white/10 rounded-2xl p-4 sm:p-5 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-3">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                      <h4 className="text-sm font-bold text-white">
-                        Parsed {parseResult.dramas.length} Drama Series
-                      </h4>
-                      <span className="text-xs text-emerald-400 font-mono bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                        {selectedDramaIds.length} selected for import
-                      </span>
+                {parseResult.dramas.length > 0 && (
+                  <Card className="space-y-4 p-4 sm:p-5">
+                    {/* Summary header */}
+                    <div className="flex flex-col justify-between gap-3 border-b border-white/10 pb-3 sm:flex-row sm:items-center">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                        <h4 className="text-sm font-bold text-white">
+                          Parsed {parseResult.dramas.length} Drama Series
+                        </h4>
+                        <Badge variant="emerald">
+                          {selectedDramaIds.length} selected
+                        </Badge>
+                        {hasExisting && duplicateCount > 0 && (
+                          <Badge variant="destructive">
+                            <GitMerge className="h-3 w-3" />
+                            {duplicateCount} already in catalog — skipped by
+                            default
+                          </Badge>
+                        )}
+                      </div>
+                      <Button variant="ghost" size="sm" onClick={handleSelectAll}>
+                        {selectedDramaIds.length === parseResult.dramas.length
+                          ? "Deselect All"
+                          : "Select All"}
+                      </Button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={handleSelectAll}
-                      className="text-xs text-gray-300 hover:text-white font-medium underline cursor-pointer"
-                    >
-                      {selectedDramaIds.length === parseResult.dramas.length
-                        ? "Deselect All"
-                        : "Select All"}
-                    </button>
-                  </div>
-
-                  <div className="max-h-64 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-                    {parseResult.dramas.map((drama, idx) => {
-                      const isSelected = selectedDramaIds.includes(drama.id);
-                      return (
-                        <div
-                          key={drama.id}
-                          onClick={() => handleToggleDramaSelection(drama.id)}
-                          className={`p-3 rounded-xl border flex items-center justify-between gap-3 transition-all cursor-pointer ${
-                            isSelected
-                              ? "bg-emerald-950/20 border-emerald-500/40"
-                              : "bg-[#121212] border-white/5 opacity-60 hover:opacity-100"
-                          }`}
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={() => handleToggleDramaSelection(drama.id)}
-                              className="rounded border-white/20 text-emerald-500 focus:ring-emerald-500 w-4 h-4"
-                            />
-                            <img
-                              src={drama.posterUrl}
-                              alt={drama.title}
-                              className="w-10 h-14 rounded-lg object-cover border border-white/10 shrink-0"
-                            />
-                            <div className="min-w-0">
-                              <p className="text-xs font-bold text-white truncate">
-                                {drama.title}
-                              </p>
-                              <div className="flex items-center gap-2 text-[10px] text-gray-400 mt-0.5">
-                                <span className="bg-white/10 px-1.5 py-0.5 rounded text-gray-300">
-                                  {drama.category}
-                                </span>
-                                <span>{drama.episodes.length} Episodes</span>
-                                <span className="text-amber-400">★ {drama.rating}</span>
+                    {/* Paginated list (fixes white-screen on large imports) */}
+                    <ScrollArea className="max-h-72 space-y-2 pr-1">
+                      {pageDramas.map((drama) => {
+                        const isSelected = selectedDramaIds.includes(drama.id);
+                        const dupe = isDuplicate(drama);
+                        return (
+                          <div
+                            key={drama.id}
+                            onClick={() => handleToggleDramaSelection(drama.id)}
+                            className={cn(
+                              "flex cursor-pointer items-center justify-between gap-3 rounded-xl border p-3 transition-all",
+                              isSelected
+                                ? "border-emerald-500/40 bg-emerald-950/20"
+                                : "border-white/5 bg-ink-800/60 opacity-70 hover:opacity-100",
+                              dupe && !isSelected && "opacity-50"
+                            )}
+                          >
+                            <div className="flex min-w-0 items-center gap-3">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleDramaSelection(drama.id)}
+                                className="h-4 w-4 shrink-0 rounded border-white/20 text-emerald-500 focus:ring-emerald-500"
+                              />
+                              <img
+                                src={drama.posterUrl}
+                                alt={drama.title}
+                                className="h-14 w-10 shrink-0 rounded-lg border border-white/10 object-cover"
+                                loading="lazy"
+                              />
+                              <div className="min-w-0">
+                                <p className="flex items-center gap-1.5 truncate text-xs font-bold text-white">
+                                  <span className="truncate">{drama.title}</span>
+                                  {dupe && (
+                                    <Badge variant="destructive">In catalog</Badge>
+                                  )}
+                                </p>
+                                <div className="mt-0.5 flex items-center gap-2 text-[10px] text-zinc-400">
+                                  <Badge variant="secondary">{drama.category}</Badge>
+                                  <span>{drama.episodes.length} Episodes</span>
+                                  <span className="text-amber-400">
+                                    ★ {drama.rating}
+                                  </span>
+                                </div>
                               </div>
                             </div>
+                            <div className="shrink-0 text-right">
+                              <span className="block font-mono text-[10px] text-zinc-400">
+                                {drama.viewsCount} views
+                              </span>
+                              <span className="text-[9px] font-semibold text-emerald-400">
+                                Ready
+                              </span>
+                            </div>
                           </div>
+                        );
+                      })}
+                    </ScrollArea>
 
-                          <div className="text-right shrink-0">
-                            <span className="text-[10px] font-mono text-gray-400 block">
-                              {drama.viewsCount} views
-                            </span>
-                            <span className="text-[9px] text-emerald-400">Ready</span>
-                          </div>
+                    {/* Pager */}
+                    {totalPages > 1 && (
+                      <div className="flex items-center justify-between border-t border-white/10 pt-3">
+                        <span className="text-[11px] text-zinc-400">
+                          Showing{" "}
+                          <span className="font-bold text-zinc-200">
+                            {(page - 1) * PAGE_SIZE + 1}–
+                            {Math.min(page * PAGE_SIZE, parseResult.dramas.length)}
+                          </span>{" "}
+                          of {parseResult.dramas.length}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => setPage((p) => Math.max(1, p - 1))}
+                            disabled={page === 1}
+                            aria-label="Previous page"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </Button>
+                          <span className="min-w-14 text-center text-xs font-bold text-zinc-200">
+                            {page} / {totalPages}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() =>
+                              setPage((p) => Math.min(totalPages, p + 1))
+                            }
+                            disabled={page === totalPages}
+                            aria-label="Next page"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </Button>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    )}
 
-                  {/* Import Mode Selector */}
-                  <div className="pt-3 border-t border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                    <span className="text-gray-300 font-bold">Import Strategy:</span>
-                    <div className="flex items-center gap-4">
-                      <label className="flex items-center gap-2 cursor-pointer text-gray-200">
-                        <input
-                          type="radio"
-                          name="importMode"
-                          value="append"
-                          checked={importMode === "append"}
-                          onChange={() => setImportMode("append")}
-                          className="text-red-600 focus:ring-red-500"
-                        />
-                        <span>Append (Keep {existingDramasCount} existing)</span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer text-red-300">
-                        <input
-                          type="radio"
-                          name="importMode"
-                          value="replace"
-                          checked={importMode === "replace"}
-                          onChange={() => setImportMode("replace")}
-                          className="text-red-600 focus:ring-red-500"
-                        />
-                        <span>Replace Catalog</span>
-                      </label>
+                    {/* Import mode */}
+                    <div className="flex flex-col justify-between gap-3 border-t border-white/10 pt-3 text-xs sm:flex-row sm:items-center">
+                      <span className="font-bold text-zinc-300">
+                        Import Strategy:
+                      </span>
+                      <div className="flex items-center gap-4">
+                        <label className="flex cursor-pointer items-center gap-2 text-zinc-200">
+                          <input
+                            type="radio"
+                            name="importMode"
+                            value="append"
+                            checked={importMode === "append"}
+                            onChange={() => setImportMode("append")}
+                            className="text-brand-600 focus:ring-brand-500"
+                          />
+                          <span>Append (Keep {existingDramasCount} existing)</span>
+                        </label>
+                        <label className="flex cursor-pointer items-center gap-2 text-red-300">
+                          <input
+                            type="radio"
+                            name="importMode"
+                            value="replace"
+                            checked={importMode === "replace"}
+                            onChange={() => setImportMode("replace")}
+                            className="text-brand-600 focus:ring-brand-500"
+                          />
+                          <span>Replace Catalog</span>
+                        </label>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+                  </Card>
+                )}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
 
         {/* Footer */}
-        <div className="p-4 sm:p-5 border-t border-white/10 bg-[#161616] flex items-center justify-between">
-          <button
-            onClick={onClose}
-            className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-bold transition-colors cursor-pointer"
-          >
+        <div className="flex items-center justify-between border-t border-white/10 bg-ink-800/60 p-4 sm:p-5">
+          <Button variant="outline" onClick={onClose}>
             Cancel
-          </button>
-
-          <button
+          </Button>
+          <Button
             onClick={handleExecuteImport}
             disabled={!parseResult || selectedDramaIds.length === 0}
-            className="px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-red-900/40 transition-transform active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            size="lg"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="h-4 w-4" />
             <span>Import {selectedDramaIds.length} Series into Catalog</span>
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
     </div>
   );
 };

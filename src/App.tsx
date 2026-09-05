@@ -499,14 +499,58 @@ export default function App() {
   };
 
   const handleUpdateDramas = async (updatedDramas: Drama[]) => {
+    // Safety net: de-dupe by normalized title BEFORE syncing to Firestore.
+    // When two copies of the same title exist, MERGE them instead of
+    // dropping one (keeps every episode): winner = the copy with more
+    // episodes; incoming episodes from the loser are appended if their
+    // number+videoUrl don't already exist.
+    const normalize = (t: string) =>
+      t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const byTitle = new Map<string, Drama>();
+    for (const d of updatedDramas) {
+      const key = normalize(d.title);
+      const prev = byTitle.get(key);
+      if (!prev) {
+        byTitle.set(key, d);
+        continue;
+      }
+      const [winner, loser] =
+        d.episodes.length >= prev.episodes.length ? [d, prev] : [prev, d];
+      const seen = new Set(
+        winner.episodes.map((e) => `${e.number}|${e.videoUrl}`)
+      );
+      const merged = [...winner.episodes];
+      for (const e of loser.episodes) {
+        const k = `${e.number}|${e.videoUrl}`;
+        if (!seen.has(k)) {
+          seen.add(k);
+          merged.push(e);
+        }
+      }
+      merged.sort((a, b) => a.number - b.number);
+      byTitle.set(key, {
+        ...winner,
+        episodes: merged,
+        episodesCount: merged.length,
+      });
+    }
+    const dedupedUpdated = Array.from(byTitle.values());
+    const removedByDedupe = updatedDramas.length - dedupedUpdated.length;
+    if (removedByDedupe > 0) {
+      console.warn(
+        `[DramaHub] Merged ${removedByDedupe} duplicate-title drama(s) before sync`
+      );
+    }
     try {
       // Delta sync: Delete removed dramas from Firestore
-      const deleted = dramas.filter((d) => !updatedDramas.some((ud) => ud.id === d.id));
+      const deleted = dramas.filter(
+        (d) => !dedupedUpdated.some((ud) => ud.id === d.id)
+      );
       for (const d of deleted) {
         await deleteDramaFromFirestore(d.id);
       }
       // Delta sync: Upload added/updated dramas to Firestore
-      const modifiedOrAdded = updatedDramas.filter((ud) => {
+      const modifiedOrAdded = dedupedUpdated.filter((ud) => {
         const existing = dramas.find((d) => d.id === ud.id);
         return !existing || JSON.stringify(existing) !== JSON.stringify(ud);
       });
@@ -516,7 +560,7 @@ export default function App() {
     } catch (err) {
       console.error("Error syncing dramas delta to Firestore:", err);
     }
-    setDramas(updatedDramas);
+    setDramas(dedupedUpdated);
   };
 
   const handleAddCustomDrama = async (newDrama: Drama) => {

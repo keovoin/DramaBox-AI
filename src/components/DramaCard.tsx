@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { Play, Star, Heart, Bookmark, Share2, Check } from "lucide-react";
 import { Drama } from "../types";
+import { cn } from "../lib/cn";
+import { Badge } from "./ui/Badge";
 
 interface DramaCardProps {
   drama: Drama;
@@ -55,44 +57,51 @@ export const DramaCard: React.FC<DramaCardProps> = ({
   };
 
   return (
-    <div 
+    <div
       onClick={() => onSelect(drama)}
-      className="group cursor-pointer select-none transition-all duration-300 relative"
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onSelect(drama);
+      }}
+      className="group cursor-pointer select-none outline-none"
     >
-      <div className="aspect-[3/4] bg-[#1a1a1a] rounded-2xl border border-white/5 mb-3 overflow-hidden transition-all duration-300 group-hover:border-red-600/50 group-hover:shadow-lg group-hover:shadow-red-900/20 relative group-hover:-translate-y-1">
-        {/* Poster Image */}
+      <div className="relative aspect-[3/4] overflow-hidden rounded-2xl border border-white/10 bg-ink-800 shadow-md shadow-black/40 transition-all duration-300 group-hover:-translate-y-1 group-hover:border-brand-500/60 group-hover:shadow-xl group-hover:shadow-brand-950/50 group-focus-visible:ring-2 group-focus-visible:ring-brand-500/70 mb-3">
+        {/* Poster */}
         <img
           src={drama.posterUrl}
           alt={drama.title}
-          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
           loading="lazy"
         />
 
-        {/* Top Badges */}
-        <div className="absolute top-2.5 right-2.5 bg-black/70 backdrop-blur-md text-[10px] font-bold px-2 py-1 rounded-md text-amber-300 flex items-center gap-1 border border-white/10 shadow-sm z-10">
-          <Star className="w-3 h-3 fill-amber-300 text-amber-300" />
-          <span>{drama.rating}</span>
+        {/* Top badges */}
+        <div className="absolute top-2.5 right-2.5 z-10">
+          <Badge variant="secondary" className="bg-black/70 backdrop-blur-md">
+            <Star className="h-3 w-3 fill-amber-300 text-amber-300" />
+            {drama.rating}
+          </Badge>
         </div>
-
         {drama.category && (
-          <div className="absolute top-2.5 left-2.5 bg-red-600/90 text-white text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wide shadow-sm z-10">
-            {drama.category}
+          <div className="absolute top-2.5 left-2.5 z-10">
+            <Badge variant="brand">{drama.category}</Badge>
           </div>
         )}
 
-        {/* Action Buttons Overlay (Favorite, Watchlist, Share) */}
-        <div className="absolute bottom-2.5 right-2.5 left-2.5 flex items-center justify-end gap-1.5 z-20 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-          {/* Share Button */}
+        {/* Quick actions */}
+        <div className="absolute inset-x-2.5 bottom-2.5 z-20 flex items-center justify-end gap-1.5 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
           <button
             type="button"
             onClick={handleShareClick}
             title="Share drama link"
-            className="p-2 rounded-full bg-black/70 hover:bg-black/90 backdrop-blur-md text-white transition-all hover:scale-110 active:scale-95 shadow-md"
+            className="rounded-full bg-black/70 p-2 text-zinc-200 shadow-md backdrop-blur-md transition-all hover:scale-110 hover:bg-black/90 hover:text-white active:scale-95 cursor-pointer"
           >
-            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5 text-gray-200 hover:text-white" />}
+            {copied ? (
+              <Check className="h-3.5 w-3.5 text-emerald-400" />
+            ) : (
+              <Share2 className="h-3.5 w-3.5" />
+            )}
           </button>
-
-          {/* Watchlist Bookmark Button */}
           {onToggleWatchlist && (
             <button
               type="button"
@@ -101,15 +110,16 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 onToggleWatchlist(e, drama.id);
               }}
               title={isInWatchlist ? "Remove from Watchlist" : "Add to Watchlist"}
-              className={`p-2 rounded-full bg-black/70 hover:bg-black/90 backdrop-blur-md transition-all hover:scale-110 active:scale-95 shadow-md ${
+              className={cn(
+                "rounded-full bg-black/70 p-2 shadow-md backdrop-blur-md transition-all hover:scale-110 hover:bg-black/90 active:scale-95 cursor-pointer",
                 isInWatchlist ? "text-amber-400" : "text-white"
-              }`}
+              )}
             >
-              <Bookmark className={`w-3.5 h-3.5 ${isInWatchlist ? "fill-amber-400 text-amber-400" : "text-white"}`} />
+              <Bookmark
+                className={cn("h-3.5 w-3.5", isInWatchlist && "fill-amber-400")}
+              />
             </button>
           )}
-
-          {/* Favorite Heart Button */}
           {onToggleFavorite && (
             <button
               type="button"
@@ -118,26 +128,31 @@ export const DramaCard: React.FC<DramaCardProps> = ({
                 onToggleFavorite(e, drama.id);
               }}
               title={isFavorite ? "Remove from Favorites" : "Add to Favorites"}
-              className="p-2 rounded-full bg-black/70 hover:bg-black/90 backdrop-blur-md text-white transition-all hover:scale-110 active:scale-95 shadow-md"
+              className={cn(
+                "rounded-full bg-black/70 p-2 shadow-md backdrop-blur-md transition-all hover:scale-110 hover:bg-black/90 active:scale-95 cursor-pointer",
+                isFavorite ? "text-red-500" : "text-white"
+              )}
             >
-              <Heart className={`w-3.5 h-3.5 ${isFavorite ? "fill-red-500 text-red-500" : "text-white"}`} />
+              <Heart
+                className={cn("h-3.5 w-3.5", isFavorite && "fill-red-500")}
+              />
             </button>
           )}
         </div>
 
-        {/* Hover Overlay with Play Icon */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-          <div className="w-12 h-12 bg-red-600 text-white rounded-full flex items-center justify-center shadow-xl transform scale-75 group-hover:scale-100 transition-transform">
-            <Play className="w-6 h-6 fill-white ml-0.5" />
+        {/* Hover play overlay */}
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+          <div className="flex h-12 w-12 scale-75 items-center justify-center rounded-full bg-brand-600 text-white shadow-xl shadow-brand-950/60 transition-transform duration-300 group-hover:scale-100">
+            <Play className="ml-0.5 h-6 w-6 fill-white" />
           </div>
         </div>
       </div>
 
-      {/* Info Title and Episode count */}
-      <h3 className="text-sm font-bold text-white truncate group-hover:text-red-400 transition-colors">
+      {/* Meta */}
+      <h3 className="truncate text-sm font-bold text-zinc-100 transition-colors group-hover:text-brand-400">
         {drama.title}
       </h3>
-      <p className="text-[11px] text-gray-400 mt-0.5">
+      <p className="mt-0.5 text-[11px] text-zinc-500">
         {drama.category} • {drama.episodesCount} Episodes
       </p>
     </div>

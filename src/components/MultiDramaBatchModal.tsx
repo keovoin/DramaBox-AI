@@ -31,6 +31,8 @@ interface MultiDramaBatchModalProps {
   isOpen: boolean;
   onClose: () => void;
   existingDramasCount: number;
+  /** Normalized titles already in the catalog (informational; dedup also enforced by the import handler). */
+  existingTitles?: string[];
   onImportDramas: (importedDramas: Drama[], mode: "append" | "replace") => void;
 }
 

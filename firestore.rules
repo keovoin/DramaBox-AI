@@ -6,22 +6,26 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Dramas collection (Public read for all users; write allowed for uploads)
+    // Dramas collection:
+    // - Listing (reading the collection) must be public so ANY visitor can load the catalog
+    // - Reading/writing individual docs: read public, write admin-only (keovoin@gmail.com)
+    match /dramas {
+      allow read: if true;
+    }
     match /dramas/{dramaId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.token.email == "keovoin@gmail.com";
     }
 
-    // Users collection (Allowed for both Google authenticated and manual/guest accounts)
+    // Users collection
     match /users/{userId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null && (request.auth.uid == userId || request.auth.token.email == "keovoin@gmail.com");
 
-      // User subcollections: favorites and history
       match /favorites/{dramaId} {
-        allow read, write: if true;
+        allow read, write: if request.auth != null && request.auth.uid == userId;
       }
-
       match /history/{historyId} {
-        allow read, write: if true;
+        allow read, write: if request.auth != null && request.auth.uid == userId;
       }
     }
   }

@@ -1,0 +1,6 @@
+{
+  "firestore": {
+    "rules": "firestore.rules",
+    "database": "ai-studio-dramahub-19e8f629-73b9-40e9-bfc6-37a8badaab29"
+  }
+}

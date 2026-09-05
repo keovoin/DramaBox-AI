@@ -716,11 +716,28 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   // Handle Bulk Drama Import
   const handleBulkImportDramas = (newDramas: Drama[], mode: "append" | "replace") => {
+    const normalize = (t: string) =>
+      t.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     let updated: Drama[];
     if (mode === "replace") {
       updated = newDramas;
     } else {
-      updated = [...newDramas, ...dramas];
+      // Append with title-based de-duplication: skip incoming series whose
+      // title already exists in the catalog (keeps the existing copy,
+      // which is the one with episodes/playback history).
+      const existingTitles = new Set(dramas.map((d) => normalize(d.title)));
+      const deduped = newDramas.filter(
+        (d) => !existingTitles.has(normalize(d.title))
+      );
+      const skipped = newDramas.length - deduped.length;
+      updated = [...deduped, ...dramas];
+      if (skipped > 0) {
+        setCatalogNotice({
+          message: `Skipped ${skipped} duplicate title(s) already in catalog. Imported ${deduped.length} series.`,
+          type: "success",
+        });
+        setTimeout(() => setCatalogNotice(null), 6000);
+      }
     }
     onUpdateDramas(updated);
     if (updated.length > 0) {
@@ -3598,6 +3615,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         isOpen={showBulkImportModal}
         onClose={() => setShowBulkImportModal(false)}
         existingDramasCount={dramas.length}
+        existingTitles={dramas.map((d) => d.title)}
         onImportDramas={handleBulkImportDramas}
       />
 
@@ -3606,6 +3624,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         isOpen={showMultiDramaBatchModal}
         onClose={() => setShowMultiDramaBatchModal(false)}
         existingDramasCount={dramas.length}
+        existingTitles={dramas.map((d) => d.title)}
         onImportDramas={handleBulkImportDramas}
       />
     </div>

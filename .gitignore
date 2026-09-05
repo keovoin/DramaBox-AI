@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# local test scratch
+*_test.mjs
+sdk_test.mjs
