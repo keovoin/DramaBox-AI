@@ -13,7 +13,8 @@ import { ContinueWatching } from "./components/ContinueWatching";
 import { InstallAppPrompt } from "./components/InstallAppPrompt";
 import { DRAMA_CATALOG } from "./data/dramas";
 import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord, PaymentGatewayType } from "./types";
-import { syncUserProfileToFirestore, subscribeToDramasFromFirestore, syncDramaToFirestore, deleteDramaFromFirestore, subscribeToUsersFromFirestore, db } from "./lib/firebase";
+import { syncUserProfileToFirestore, subscribeToDramasFromFirestore, syncDramaToFirestore, deleteDramaFromFirestore, subscribeToUsersFromFirestore, db, auth, completeFirebaseLogin, logoutFirebase } from "./lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { Flame, Sparkles, Star, Plus, Film, Compass, Heart, History, RefreshCw, Shield, Bookmark, Check, Mail } from "lucide-react";
 
@@ -299,6 +300,40 @@ export default function App() {
   const [showCutluyModal, setShowCutluyModal] = useState<boolean>(false);
   const [cutluyGateway, setCutluyGateway] = useState<PaymentGatewayType>("cutluy");
   const [cutluyMode, setCutluyMode] = useState<"bakong" | "aba">("bakong");
+
+  // Real Firebase session listener — the single source of truth for "logged in".
+  // Fixes: (1) login success that never applied because the popup session died
+  // before the profile write, (2) stale dramahub_user resurrecting a session
+  // after Sign Out (logout now clears localStorage synchronously).
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        try {
+          const profile = await completeFirebaseLogin(fbUser);
+          setUser(profile);
+          setUsersList((prev) => {
+            const exists = prev.some((u) => u.id === profile.id || (u.email && u.email === profile.email));
+            if (exists) {
+              return prev.map((u) => (u.id === profile.id || u.email === profile.email ? profile : u));
+            }
+            return [profile, ...prev];
+          });
+        } catch (err) {
+          console.error("Failed to resolve Firebase session:", err);
+        }
+      } else {
+        // No Firebase session: drop any local-only session too, so the UI can
+        // never show "logged in" while the backend says otherwise.
+        setUser(null);
+        try {
+          localStorage.removeItem("dramahub_user");
+        } catch {
+          // ignore
+        }
+      }
+    });
+    return () => unsubAuth();
+  }, []);
 
   const handleUpdateUser = (updatedProfile: UserProfile | null) => {
     setUser(updatedProfile);
@@ -776,7 +811,17 @@ export default function App() {
           onOpenAdmin={() => setCurrentTab("admin")}
           user={user}
           onOpenAuth={() => setShowAuthModal(true)}
-          onLogout={() => setUser(null)}
+          onLogout={() => {
+            // End the real Firebase session too, otherwise onAuthStateChanged
+            // immediately resurrects the user and the UI looks "stuck logged out".
+            logoutFirebase().catch(() => {});
+            setUser(null);
+            try {
+              localStorage.removeItem("dramahub_user");
+            } catch {
+              // ignore
+            }
+          }}
           onOpenUpgrade={() => setShowUpgradeModal(true)}
           onOpenEditProfile={() => setShowEditProfileModal(true)}
           currentTab={currentTab}
@@ -1115,7 +1160,15 @@ export default function App() {
             </div>
             <div className="pt-2 flex flex-col gap-3">
               <button
-                onClick={() => setUser(null)}
+                onClick={() => {
+                  logoutFirebase().catch(() => {});
+                  setUser(null);
+                  try {
+                    localStorage.removeItem("dramahub_user");
+                  } catch {
+                    // ignore
+                  }
+                }}
                 className="w-full py-3 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl shadow-lg transition-transform active:scale-95 cursor-pointer"
               >
                 Log Out & Switch Account

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { 
   X, 
   Mail, 
@@ -12,7 +12,8 @@ import {
   Sparkles
 } from "lucide-react";
 import { UserProfile } from "../types";
-import { loginWithFirebaseGoogle, syncUserProfileToFirestore } from "../lib/firebase";
+import { loginWithFirebaseGoogle, syncUserProfileToFirestore, auth, googleProvider, completeFirebaseLogin } from "../lib/firebase";
+import { signInWithRedirect, getRedirectResult, linkWithRedirect } from "firebase/auth";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -52,11 +53,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [otpCode, setOtpCode] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [notice, setNotice] = useState<string>("");
+  // Guard against double-clicked Google sign-in (second popup immediately
+  // fails with auth/cancelled-popup-request, which users read as "limit")
+  const authInFlight = useRef<boolean>(false);
 
   if (!isOpen) return null;
 
   // Handle Real Google OAuth / Firebase Google Auth
   const handleGoogleOAuthSignIn = async () => {
+    if (authInFlight.current) return;
+    authInFlight.current = true;
     setIsLoading(true);
     setNotice("");
 
@@ -68,19 +74,70 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (firebaseErr: any) {
       console.warn("Firebase Google Auth error:", firebaseErr);
-      setIsLoading(false);
 
-      if (firebaseErr?.code === "auth/popup-closed-by-user" || firebaseErr?.message?.includes("closed-by-user")) {
+      const code = firebaseErr?.code || "";
+      // Popup blocked / network-limited browsers (in-app browsers, strict popups,
+      // some mobile keyboards intercepting the popup): fall back to a full-page
+      // redirect sign-in, which works everywhere a popup doesn't.
+      if (
+        code === "auth/popup-blocked" ||
+        code === "auth/cancelled-popup-request" ||
+        code === "auth/network-request-failed" ||
+        code === "auth/api-key-not-valid.-please-pass-a-valid-api-key."
+      ) {
+        try {
+          if (auth.currentUser) {
+            // Already signed in anonymously or via another method — link instead.
+            await linkWithRedirect(auth.currentUser, googleProvider);
+          } else {
+            await signInWithRedirect(auth, googleProvider);
+          }
+          // Page navigates to Google; stay in loading state.
+          return;
+        } catch (redirectErr: any) {
+          console.error("Redirect sign-in failed:", redirectErr);
+          setIsLoading(false);
+          setNotice(redirectErr?.message || "Google sign-in could not start. Try the email form below.");
+          return;
+        }
+      }
+
+      setIsLoading(false);
+      if (code === "auth/popup-closed-by-user" || firebaseErr?.message?.includes("closed-by-user")) {
         setNotice("Google sign-in popup was closed. Please try again.");
-      } else if (firebaseErr?.code === "auth/unauthorized-domain") {
+      } else if (code === "auth/unauthorized-domain") {
         setNotice("Domain 'urdrama.com' must be added to Firebase Console > Authentication > Settings > Authorized Domains. You can also sign in by entering your email address below.");
-      } else if (firebaseErr?.code === "auth/popup-blocked") {
-        setNotice("Popup blocked by your browser. Please allow popups for urdrama.com or sign in with your email below.");
+      } else if (code === "auth/admin-operator-credential-required" || code === "auth/operation-not-allowed") {
+        setNotice("Google sign-in is not enabled for this Firebase project yet (Firebase Console > Authentication > Sign-in method). You can enter your Gmail address below meanwhile.");
       } else {
         setNotice(firebaseErr?.message || "Google sign-in was not completed. You can enter your Gmail address below.");
       }
+    } finally {
+      authInFlight.current = false;
     }
   };
+
+  // Recover a redirect sign-in completed by this page load (mobile fallback path)
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await getRedirectResult(auth, { onBeforeReload: () => setIsLoading(true) });
+        if (result?.user && !cancelled) {
+          const profile = await completeFirebaseLogin(result.user);
+          if (!cancelled) {
+            setIsLoading(false);
+            onLoginSuccess(profile);
+            onClose();
+          }
+        }
+      } catch (err: any) {
+        console.warn("getRedirectResult error:", err);
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [onLoginSuccess, onClose]);
 
   // Listen for OAuth postMessage callback from backend
   React.useEffect(() => {
@@ -125,7 +182,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       const emailUsername = gmailEmail.split("@")[0] || "User";
       const displayName = gmailName.trim() || emailUsername.charAt(0).toUpperCase() + emailUsername.slice(1);
       const isAdmin = gmailEmail.trim().toLowerCase() === "keovoin@gmail.com";
-      
+
       const userProfile: UserProfile = {
         id: `usr_gmail_${Date.now()}`,
         name: displayName,
@@ -138,7 +195,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      syncUserProfileToFirestore(userProfile);
+      // NOTE: manual entry is unverified — no Firebase credential exists, so a
+      // Firestore write here would be rejected by security rules anyway. Skip the
+      // sync and keep the session local-only.
       onLoginSuccess(userProfile);
       setIsLoading(false);
       onClose();
@@ -179,7 +238,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      syncUserProfileToFirestore(userProfile);
+      // NOTE: SMS OTP is mocked (no real provider wired) — unverified session,
+      // local-only. Do not sync to Firestore: rules reject unauthenticated writes.
       onLoginSuccess(userProfile);
       setIsLoading(false);
       onClose();

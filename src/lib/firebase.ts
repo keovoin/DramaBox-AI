@@ -182,28 +182,34 @@ export function subscribeToUsersFromFirestore(onUpdate: (users: UserProfile[]) =
   });
 }
 
+// Resolve a Firebase-authenticated user into a DramaHub UserProfile WITHOUT
+// clobbering existing data (VIP status, coins, transactions) stored in Firestore.
+// Existing profile wins; new users get a freshly seeded one.
+export async function completeFirebaseLogin(fbUser: User): Promise<UserProfile> {
+  const existing = await fetchUserProfileFromFirestore(fbUser.uid);
+  if (existing) return { ...existing, id: fbUser.uid };
+
+  const isAdmin = fbUser.email?.toLowerCase() === "keovoin@gmail.com";
+  const userProfile: UserProfile = {
+    id: fbUser.uid,
+    name: fbUser.displayName || fbUser.email?.split("@")[0] || "Drama Fan",
+    email: fbUser.email || "",
+    authMethod: "gmail",
+    avatarUrl: fbUser.photoURL || "https://lh3.googleusercontent.com/a/default-user=s96-c",
+    isVip: isAdmin,
+    vipExpiresAt: isAdmin ? "2030-12-31" : undefined,
+    coins: 0,
+    createdAt: new Date().toISOString(),
+  };
+  await syncUserProfileToFirestore(userProfile);
+  return userProfile;
+}
+
 // Trigger Google Popup Login via Firebase Auth
 export async function loginWithFirebaseGoogle(): Promise<UserProfile> {
   try {
     const result = await signInWithPopup(auth, googleProvider);
-    const user: User = result.user;
-    const isAdmin = user.email?.toLowerCase() === "keovoin@gmail.com";
-
-    const userProfile: UserProfile = {
-      id: user.uid,
-      name: user.displayName || user.email?.split("@")[0] || "Drama Fan",
-      email: user.email || "",
-      authMethod: "gmail",
-      avatarUrl: user.photoURL || "https://lh3.googleusercontent.com/a/default-user=s96-c",
-      isVip: isAdmin,
-      vipExpiresAt: isAdmin ? "2030-12-31" : undefined,
-      coins: 0,
-      createdAt: new Date().toISOString(),
-    };
-
-    // Save to Firestore
-    await syncUserProfileToFirestore(userProfile);
-    return userProfile;
+    return await completeFirebaseLogin(result.user);
   } catch (error: any) {
     console.error("Firebase Google Auth error:", error);
     throw error;
