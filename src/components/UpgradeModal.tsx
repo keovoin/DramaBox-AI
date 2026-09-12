@@ -1,20 +1,22 @@
 import React, { useState } from "react";
-import { X, Crown, Check, Sparkles, ShieldCheck, CreditCard, Clock, Percent, Zap } from "lucide-react";
-import { SubscriptionPlan, UserProfile, PaymentGatewayType } from "../types";
+import { X, Crown, Check, ShieldCheck, CreditCard, Clock, Percent, Zap, Ticket, Loader2, Sparkles } from "lucide-react";
+import { PromoDiscount, SubscriptionPlan, UserProfile, PaymentGatewayType } from "../types";
 import { getPaymentGatewaySettings } from "../services/gatewayService";
+import { computePlanDiscount, fetchPromoByCode, normalizePromoCode, promoUsability, redeemPromoCode } from "../services/promoService";
 
 interface UpgradeModalProps {
   onClose: () => void;
   onUpgradeSuccess: () => void;
-  onOpenCutluyCheckout: (plan: SubscriptionPlan, gateway?: PaymentGatewayType, mode?: "bakong" | "aba") => void;
+  onOpenCutluyCheckout: (plan: SubscriptionPlan, promo: PromoDiscount | null, gateway?: PaymentGatewayType, mode?: "bakong" | "aba") => void;
+  onFreeGrant: (promo: PromoDiscount) => void;
   user?: UserProfile | null;
 }
 
-const BASE_PLANS: Record<"weekly" | "monthly" | "yearly", SubscriptionPlan> = {
+export const BASE_PLANS: Record<"weekly" | "monthly" | "yearly", SubscriptionPlan> = {
   weekly: {
     id: "plan_weekly",
     name: "Weekly VIP Access",
-    price: 2.99,
+    price: 1.99,
     coins: 50,
     period: "/ week",
     features: ["Unlock All VIP Episodes", "HD 1080p Quality", "Ad-Free Stream"]
@@ -22,7 +24,7 @@ const BASE_PLANS: Record<"weekly" | "monthly" | "yearly", SubscriptionPlan> = {
   monthly: {
     id: "plan_monthly",
     name: "Monthly VIP Pass",
-    price: 8.99,
+    price: 5.99,
     coins: 250,
     period: "/ month",
     popular: true,
@@ -31,21 +33,36 @@ const BASE_PLANS: Record<"weekly" | "monthly" | "yearly", SubscriptionPlan> = {
   yearly: {
     id: "plan_yearly",
     name: "Annual Unlimited VIP",
-    price: 59.99,
+    price: 49.99,
     coins: 2000,
     period: "/ year",
-    features: ["Save 60% Annual Discount", "All 50,000+ Episodes", "2000 Bonus Coins", "Priority Video CDN"]
+    features: ["Best Value — 2 Months Free", "All 50,000+ Episodes", "2000 Bonus Coins", "Priority Video CDN"]
   }
 };
+
+type PlanKey = "weekly" | "monthly" | "yearly";
+
+const PLAN_ROWS: { key: PlanKey; label: string; sub: string }[] = [
+  { key: "weekly", label: "Weekly Access", sub: "Billed weekly. Extend anytime." },
+  { key: "monthly", label: "Monthly VIP Subscription", sub: "Unlimited Access to All Episodes" },
+  { key: "yearly", label: "Yearly VIP (Best Value)", sub: "Full Year Unlimited VIP Access" },
+];
 
 export const UpgradeModal: React.FC<UpgradeModalProps> = ({
   onClose,
   onUpgradeSuccess,
   onOpenCutluyCheckout,
+  onFreeGrant,
   user
 }) => {
-  const [selectedPlanKey, setSelectedPlanKey] = useState<"weekly" | "monthly" | "yearly">("monthly");
-  
+  const [selectedPlanKey, setSelectedPlanKey] = useState<PlanKey>("monthly");
+
+  // Promo code state
+  const [codeInput, setCodeInput] = useState<string>("");
+  const [promo, setPromo] = useState<PromoDiscount | null>(null);
+  const [promoNotice, setPromoNotice] = useState<string>("");
+  const [promoType, setPromoType] = useState<"checking" | "idle">("idle");
+
   const savedSettings = getPaymentGatewaySettings();
   const activeGateway = savedSettings.activeGateway === "senghongstore" ? "senghongstore" : "cutluy";
   const activeMode = savedSettings.senghong.mode || "bakong";
@@ -55,10 +72,10 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
     user?.isVip && user?.vipExpiresAt && new Date(user.vipExpiresAt) > new Date()
   );
 
-  // Early renewal discount multiplier: 20% OFF if renewing before expiration or within active VIP period
-  const getPlanWithDiscount = (key: "weekly" | "monthly" | "yearly"): SubscriptionPlan => {
+  // Renewal discount only when NO promo code is applied (promo wins, no stacking)
+  const getPlanWithDiscount = (key: PlanKey): SubscriptionPlan => {
     const base = BASE_PLANS[key];
-    if (isCurrentlyVip) {
+    if (!promo && isCurrentlyVip) {
       const discountedPrice = Number((base.price * 0.8).toFixed(2));
       return {
         ...base,
@@ -70,11 +87,88 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
     return base;
   };
 
-  const handleCheckout = () => {
-    const planToBuy = getPlanWithDiscount(selectedPlanKey);
-    onClose();
-    onOpenCutluyCheckout(planToBuy, activeGateway, activeMode);
+  // The plan actually shown/charged, with the promo applied on top
+  const displayPlan = (key: PlanKey): { plan: SubscriptionPlan; promoAmount: number } => {
+    const base = getPlanWithDiscount(key);
+    if (!promo || promo.freeDays !== null) return { plan: base, promoAmount: 0 };
+    const after = computePlanDiscount(promo.promo, base).finalPrice;
+    return { plan: { ...base, originalPrice: base.price, price: after, promoCode: promo.code, promoLabel: promo.label }, promoAmount: Number((base.price - after).toFixed(2)) };
   };
+
+  const handleApplyPromo = async () => {
+    if (promoType === "checking") return;
+    const key = normalizePromoCode(codeInput);
+    if (!key) {
+      setPromoNotice("Enter a promo code first.");
+      return;
+    }
+    setPromoType("checking");
+    setPromoNotice("");
+    try {
+      const found = await fetchPromoByCode(key);
+      if (!found) {
+        setPromoNotice("❌ Invalid promo code. Please check and try again.");
+        return;
+      }
+      const usable = promoUsability(found, user?.email);
+      if (!usable.ok) {
+        setPromoNotice(`❌ ${usable.reason}`);
+        return;
+      }
+      const base = getPlanWithDiscount(selectedPlanKey);
+      const applied = computePlanDiscount(found, base);
+      setPromo(applied);
+      setCodeInput(key);
+      setPromoNotice(`✅ ${applied.label} applied!`);
+    } catch (err: any) {
+      console.error("Promo apply failed:", err);
+      setPromoNotice("❌ Could not verify the code. Try again.");
+    } finally {
+      setPromoType("idle");
+    }
+  };
+
+  const handleRemovePromo = () => {
+    setPromo(null);
+    setCodeInput("");
+    setPromoNotice("");
+  };
+
+  const handleCheckout = async () => {
+    // FREE VIP code path: instant grant, no payment at all.
+    if (promo && promo.freeDays !== null) {
+      try {
+        await redeemPromoCode(promo.code, user?.email || "");
+      } catch (err: any) {
+        setPromoNotice(`❌ ${err?.message || "This code could not be redeemed."}`);
+        return;
+      }
+      onFreeGrant(promo);
+      onClose();
+      return;
+    }
+
+    const { plan } = displayPlan(selectedPlanKey);
+    const planToBuy: SubscriptionPlan = promo
+      ? { ...plan, promoCode: promo.code, promoLabel: promo.label }
+      : plan;
+
+    // Discounted (non-free) path: consume the code up-front; checkout continues
+    // with the reduced price already baked into planToBuy.price.
+    if (promo) {
+      try {
+        await redeemPromoCode(promo.code, user?.email || "");
+      } catch (err: any) {
+        setPromoNotice(`❌ ${err?.message || "This code could not be redeemed."}`);
+        return;
+      }
+    }
+    onClose();
+    onOpenCutluyCheckout(planToBuy, promo, activeGateway, activeMode);
+  };
+
+  const current = displayPlan(selectedPlanKey);
+  const payAmount = current.plan.price;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 overflow-hidden">
@@ -106,8 +200,8 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Early Renewal Discount Banner */}
-          {isCurrentlyVip && (
+          {/* Early Renewal Discount Banner (hidden while a promo code is applied) */}
+          {isCurrentlyVip && !promo && (
             <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-500/15 via-emerald-500/15 to-amber-500/15 border border-amber-500/30 text-amber-200 text-xs space-y-1 shadow-lg animate-fadeIn">
               <div className="flex items-center gap-2 font-black text-amber-300">
                 <Percent className="w-4 h-4 text-emerald-400" />
@@ -141,162 +235,164 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
 
           {/* Plans Selection */}
           <div className="space-y-3">
-            {/* Weekly */}
-            {(() => {
-              const base = BASE_PLANS.weekly;
-              const current = getPlanWithDiscount("weekly");
+            {PLAN_ROWS.map(({ key, label, sub }) => {
+              const base = BASE_PLANS[key];
+              const { plan, promoAmount } = displayPlan(key);
+              const showStrike = Boolean(plan.originalPrice && plan.originalPrice > plan.price);
               return (
                 <button
-                  onClick={() => setSelectedPlanKey("weekly")}
-                  className={`w-full p-4 rounded-2xl border text-left flex items-center justify-between transition-all cursor-pointer ${
-                    selectedPlanKey === "weekly"
-                      ? "bg-red-600/20 border-red-500 text-white shadow-md"
-                      : "bg-[#181818] border-white/5 text-gray-400 hover:border-white/20"
-                  }`}
-                >
-                  <div>
-                    <p className="font-bold text-sm text-white flex items-center gap-2">
-                      <span>Weekly Access</span>
-                      {isCurrentlyVip && (
-                        <span className="text-[10px] bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-1.5 py-0.5 rounded-md font-bold">
-                          20% OFF
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-[10px] text-gray-400">Billed weekly. Extend anytime.</p>
-                  </div>
-                  <div className="text-right">
-                    {isCurrentlyVip ? (
-                      <div>
-                        <p className="font-bold text-base text-emerald-400">${current.price.toFixed(2)}</p>
-                        <p className="text-[10px] text-gray-400 line-through">${base.price.toFixed(2)}</p>
-                      </div>
-                    ) : (
-                      <div>
-                        <p className="font-bold text-base text-white">${base.price.toFixed(2)}</p>
-                        <p className="text-[10px] text-gray-400">/ week</p>
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })()}
-
-            {/* Monthly */}
-            {(() => {
-              const base = BASE_PLANS.monthly;
-              const current = getPlanWithDiscount("monthly");
-              return (
-                <button
-                  onClick={() => setSelectedPlanKey("monthly")}
+                  key={key}
+                  onClick={() => setSelectedPlanKey(key)}
                   className={`w-full p-4 rounded-2xl border text-left flex items-center justify-between transition-all relative cursor-pointer ${
-                    selectedPlanKey === "monthly"
+                    selectedPlanKey === key
                       ? "bg-red-600/20 border-red-500 text-white shadow-md"
                       : "bg-[#181818] border-white/5 text-gray-400 hover:border-white/20"
                   }`}
                 >
-                  <span className="absolute -top-2.5 right-4 bg-gradient-to-r from-red-600 to-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider shadow">
-                    {isCurrentlyVip ? "20% Renewal Discount" : "Most Popular"}
-                  </span>
+                  {key === "monthly" && (
+                    <span className="absolute -top-2.5 right-4 bg-gradient-to-r from-red-600 to-amber-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider shadow">
+                      {!promo && isCurrentlyVip ? "20% Renewal Discount" : "Most Popular"}
+                    </span>
+                  )}
                   <div>
-                    <p className="font-bold text-sm text-white flex items-center gap-2">
-                      <span>Monthly VIP Subscription</span>
-                      {isCurrentlyVip && (
+                    <p className="font-bold text-sm text-white flex items-center gap-2 flex-wrap">
+                      <span>{label}</span>
+                      {showStrike && !promo && (
                         <span className="text-[10px] bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-1.5 py-0.5 rounded-md font-bold">
                           20% OFF
                         </span>
                       )}
+                      {promoAmount > 0 && (
+                        <span className="text-[10px] bg-amber-500/20 border border-amber-500/40 text-amber-300 px-1.5 py-0.5 rounded-md font-bold">
+                          PROMO {promo?.label}
+                        </span>
+                      )}
+                      {promo && promo.freeDays !== null && selectedPlanKey === key && (
+                        <span className="text-[10px] bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-1.5 py-0.5 rounded-md font-bold">
+                          {promo.label}
+                        </span>
+                      )}
                     </p>
-                    <p className="text-[10px] text-amber-400 font-medium">Unlimited Access to All Episodes</p>
+                    <p className="text-[10px] text-gray-400">{sub}</p>
                   </div>
-                  <div className="text-right">
-                    {isCurrentlyVip ? (
+                  <div className="text-right shrink-0 pl-3">
+                    {showStrike ? (
                       <div>
-                        <p className="font-bold text-base text-emerald-400">${current.price.toFixed(2)}</p>
-                        <p className="text-[10px] text-gray-400 line-through">${base.price.toFixed(2)}</p>
+                        <p className={`font-bold text-base ${promoAmount > 0 ? "text-amber-300" : "text-emerald-400"}`}>${plan.price.toFixed(2)}</p>
+                        <p className="text-[10px] text-gray-400 line-through">${plan.originalPrice?.toFixed(2)}</p>
                       </div>
                     ) : (
                       <div>
                         <p className="font-bold text-base text-white">${base.price.toFixed(2)}</p>
-                        <p className="text-[10px] text-gray-400">/ month</p>
+                        <p className="text-[10px] text-gray-400">{base.period}</p>
                       </div>
                     )}
                   </div>
                 </button>
               );
-            })()}
+            })}
+          </div>
 
-            {/* Yearly */}
-            {(() => {
-              const base = BASE_PLANS.yearly;
-              const current = getPlanWithDiscount("yearly");
-              return (
+          {/* Promo Code Box */}
+          <div className="space-y-2">
+            {!promo ? (
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Ticket className="w-4 h-4 text-gray-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    value={codeInput}
+                    onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                    onKeyDown={(e) => { if (e.key === "Enter") handleApplyPromo(); }}
+                    placeholder="Promo code (e.g. VIPWELCOME)"
+                    className="w-full bg-[#181818] border border-white/10 rounded-xl pl-10 pr-3 py-3 text-xs font-bold text-white placeholder:text-gray-500 focus:outline-none focus:border-amber-500/60 tracking-widest uppercase"
+                  />
+                </div>
                 <button
-                  onClick={() => setSelectedPlanKey("yearly")}
-                  className={`w-full p-4 rounded-2xl border text-left flex items-center justify-between transition-all cursor-pointer ${
-                    selectedPlanKey === "yearly"
-                      ? "bg-red-600/20 border-red-500 text-white shadow-md"
-                      : "bg-[#181818] border-white/5 text-gray-400 hover:border-white/20"
-                  }`}
+                  onClick={handleApplyPromo}
+                  disabled={promoType === "checking"}
+                  className="px-4 py-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-black hover:bg-amber-500/25 transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1.5 shrink-0"
                 >
-                  <div>
-                    <p className="font-bold text-sm text-white flex items-center gap-2">
-                      <span>Yearly VIP (Save 60%)</span>
-                      {isCurrentlyVip && (
-                        <span className="text-[10px] bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 px-1.5 py-0.5 rounded-md font-bold">
-                          20% OFF
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-[10px] text-amber-400 font-medium">Full Year Unlimited VIP Access</p>
-                  </div>
-                  <div className="text-right">
-                    {isCurrentlyVip ? (
-                      <div>
-                        <p className="font-bold text-base text-emerald-400">${current.price.toFixed(2)}</p>
-                        <p className="text-[10px] text-gray-400 line-through">${base.price.toFixed(2)}</p>
-                      </div>
-                    ) : (
-                      <div>
-                        <p className="font-bold text-base text-white">${base.price.toFixed(2)}</p>
-                        <p className="text-[10px] text-gray-400">/ year</p>
-                      </div>
-                    )}
-                  </div>
+                  {promoType === "checking" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                  <span>Apply</span>
                 </button>
-              );
-            })()}
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/40 flex items-center justify-between animate-fadeIn">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+                    <Ticket className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-emerald-300 truncate">
+                      {promo.code} — {promo.label}
+                      {promo.freeDays !== null && <span className="text-[10px] font-bold text-emerald-200"> (no payment needed)</span>}
+                    </p>
+                    <p className="text-[10px] text-gray-400 truncate">
+                      {promo.freeDays !== null
+                        ? `Instant ${promo.freeDays} free VIP days on Redeem`
+                        : `Price drops to $${promo.finalPrice.toFixed(2)}`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={handleRemovePromo}
+                  className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 cursor-pointer shrink-0"
+                  title="Remove promo code"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+            {promoNotice && (
+              <p className={`text-[11px] font-bold px-1 ${promoNotice.startsWith("✅") ? "text-emerald-400" : "text-red-400"}`}>
+                {promoNotice}
+              </p>
+            )}
           </div>
 
-          {/* Payment Method Notice */}
-          <div className="p-3.5 bg-[#181818] border border-white/10 rounded-2xl flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xs">
-                <CreditCard className="w-4 h-4" />
+          {/* Payment Method Notice (hidden for free codes) */}
+          {!(promo && promo.freeDays !== null) && (
+            <div className="p-3.5 bg-[#181818] border border-white/10 rounded-2xl flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xs">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-white">Instant KHQR & Mobile Banking</p>
+                  <p className="text-[10px] text-gray-400">Scan with Bakong, ABA Mobile, ACLEDA, or any Bank App</p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs font-bold text-white">Instant KHQR & Mobile Banking</p>
-                <p className="text-[10px] text-gray-400">Scan with Bakong, ABA Mobile, ACLEDA, or any Bank App</p>
-              </div>
+              <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                Auto-Activation
+              </span>
             </div>
-            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-              Auto-Activation
-            </span>
-          </div>
+          )}
 
           <button
             onClick={handleCheckout}
-            className="w-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white py-4 rounded-2xl font-black text-xs shadow-xl shadow-emerald-950/50 transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-2"
+            disabled={promoType === "checking"}
+            className={`w-full py-4 rounded-2xl font-black text-xs shadow-xl transition-all cursor-pointer active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60 ${
+              promo && promo.freeDays !== null
+                ? "bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-black shadow-amber-950/50 hover:from-amber-400 hover:to-yellow-300"
+                : "bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-950/50"
+            }`}
           >
-            <CreditCard className="w-4 h-4" />
-            <span>
-              Pay with KHQR • ${getPlanWithDiscount(selectedPlanKey).price.toFixed(2)}
-            </span>
+            {promo && promo.freeDays !== null ? (
+              <>
+                <Sparkles className="w-4 h-4" />
+                <span>Claim FREE {promo.freeDays} Days VIP — $0.00</span>
+              </>
+            ) : (
+              <>
+                <CreditCard className="w-4 h-4" />
+                <span>
+                  {promo ? "Continue with Promo" : "Pay with KHQR"} • ${payAmount.toFixed(2)}
+                </span>
+              </>
+            )}
           </button>
         </div>
       </div>
     </div>
   );
 };
-
-

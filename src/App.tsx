@@ -12,7 +12,7 @@ import { CutluyPaymentModal } from "./components/CutluyPaymentModal";
 import { ContinueWatching } from "./components/ContinueWatching";
 import { InstallAppPrompt } from "./components/InstallAppPrompt";
 import { DRAMA_CATALOG } from "./data/dramas";
-import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord, PaymentGatewayType } from "./types";
+import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord, PaymentGatewayType, PromoDiscount } from "./types";
 import { syncUserProfileToFirestore, subscribeToDramasFromFirestore, syncDramaToFirestore, deleteDramaFromFirestore, subscribeToUsersFromFirestore, db, auth, completeFirebaseLogin, logoutFirebase } from "./lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
@@ -369,7 +369,7 @@ export default function App() {
   const [cutluyPlan, setCutluyPlan] = useState<SubscriptionPlan>({
     id: "plan_monthly",
     name: "Monthly VIP Pass",
-    price: 8.99,
+    price: 5.99,
     coins: 250,
     period: "/ month",
     popular: true,
@@ -628,13 +628,63 @@ export default function App() {
 
   const handleOpenCutluyCheckout = (
     plan: SubscriptionPlan,
+    _promo?: PromoDiscount | null,
     gateway?: PaymentGatewayType,
     mode?: "bakong" | "aba"
   ) => {
+    // plan.price already carries the promo discount (applied in UpgradeModal).
     setCutluyPlan(plan);
     if (gateway) setCutluyGateway(gateway);
     if (mode) setCutluyMode(mode);
     setShowCutluyModal(true);
+  };
+
+  // Free-VIP promo code path: instant grant, no payment gateway involved.
+  const handleFreePromoGrant = (promo: PromoDiscount) => {
+    const now = new Date();
+    const isVipActive = Boolean(user?.isVip && user?.vipExpiresAt && new Date(user.vipExpiresAt) > now);
+    const baseExpiry = isVipActive && user?.vipExpiresAt ? new Date(user.vipExpiresAt) : new Date();
+    baseExpiry.setDate(baseExpiry.getDate() + (promo.freeDays || 0));
+    const nextExpiryIso = baseExpiry.toISOString();
+    const planName = `Free ${promo.freeDays} Days VIP (${promo.code})`;
+
+    const newTx: TransactionRecord = {
+      id: `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      planName,
+      originalPrice: promo.originalPrice,
+      discountAmount: promo.originalPrice,
+      finalPrice: 0,
+      currency: "USD",
+      purchasedAt: now.toISOString(),
+      vipExpiresAt: nextExpiryIso,
+      status: "completed",
+      promoCode: promo.code,
+    };
+
+    const updatedTransactions = [newTx, ...(user?.transactions || [])];
+    const updatedUser: UserProfile = user
+      ? {
+          ...user,
+          isVip: true,
+          vipPlanName: planName,
+          vipExpiresAt: nextExpiryIso,
+          transactions: updatedTransactions,
+        }
+      : {
+          id: `usr_promo_${Date.now()}`,
+          name: "VIP Member",
+          email: "",
+          authMethod: "gmail",
+          isVip: true,
+          vipPlanName: planName,
+          vipExpiresAt: nextExpiryIso,
+          coins: 0,
+          createdAt: now.toISOString(),
+          transactions: updatedTransactions,
+        };
+
+    handleUpdateUser(updatedUser);
+    showToast(`🎁 ${planName} activated! Valid until ${baseExpiry.toLocaleDateString()}`);
   };
 
   const handlePaymentSuccess = (plan: SubscriptionPlan) => {
@@ -657,12 +707,12 @@ export default function App() {
 
     const nextExpiryIso = baseExpiry.toISOString();
 
-    // Determine prices and 20% discount calculation
+    // Determine prices: promo code already baked into plan.price by UpgradeModal
+    // (originalPrice carries the pre-promo price). Otherwise 20% early renewal.
     let origPrice = plan.originalPrice ?? plan.price;
     let finalPrice = plan.price;
 
-    // Force 20% discount if user is an active VIP renewing early and plan doesn't already have originalPrice
-    if (isVipActive && !plan.originalPrice) {
+    if (!plan.promoCode && isVipActive && !plan.originalPrice) {
       origPrice = plan.price;
       finalPrice = Number((plan.price * 0.8).toFixed(2));
     }
@@ -671,14 +721,15 @@ export default function App() {
 
     const newTx: TransactionRecord = {
       id: `tx_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      planName: plan.name,
+      planName: plan.promoLabel ? `${plan.name} (${plan.promoLabel})` : plan.name,
       originalPrice: origPrice,
       discountAmount: discountAmt,
       finalPrice: finalPrice,
       currency: "USD",
       purchasedAt: now.toISOString(),
       vipExpiresAt: nextExpiryIso,
-      status: "completed"
+      status: "completed",
+      promoCode: plan.promoCode,
     };
 
     const existingTxs = user?.transactions || [];
@@ -714,8 +765,9 @@ export default function App() {
     // Save persistently to state, Firestore, and localStorage for both logged in and guest users
     handleUpdateUser(updatedUser);
 
+    const discountLabel = plan.promoLabel ? `Promo ${plan.promoCode} (${plan.promoLabel})` : "20% Early Renewal Discount";
     const toastMsg = discountAmt > 0
-      ? `🎉 VIP Extended! 20% Early Renewal Discount logged ($${discountAmt.toFixed(2)} saved). Valid until ${baseExpiry.toLocaleDateString()}`
+      ? `🎉 VIP Extended! ${discountLabel} applied ($${discountAmt.toFixed(2)} saved). Valid until ${baseExpiry.toLocaleDateString()}`
       : `🎉 VIP Activated! Plan: ${plan.name} (Valid until ${baseExpiry.toLocaleDateString()})`;
 
     showToast(toastMsg);
@@ -1085,6 +1137,7 @@ export default function App() {
           onClose={() => setShowUpgradeModal(false)}
           onUpgradeSuccess={() => handlePaymentSuccess(cutluyPlan)}
           onOpenCutluyCheckout={handleOpenCutluyCheckout}
+          onFreeGrant={handleFreePromoGrant}
         />
       )}
 

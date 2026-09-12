@@ -57,9 +57,13 @@ import {
   Phone,
   AlertCircle,
   FileText,
-  EyeOff
+  EyeOff,
+  Ticket,
+  Trash2 as TrashIcon,
+  RefreshCw
 } from "lucide-react";
-import { Drama, Episode, CutluyPaymentConfig, UserProfile, PaymentGatewaySettings, PaymentGatewayType, SenghongStoreConfig } from "../types";
+import { Drama, Episode, CutluyPaymentConfig, UserProfile, PaymentGatewaySettings, PaymentGatewayType, SenghongStoreConfig, PromoCode, PromoCodeType } from "../types";
+import { subscribeToPromoCodes, savePromoCode, setPromoCodeActive, deletePromoCode, normalizePromoCode } from "../services/promoService";
 import { getCutluyConfig, saveCutluyConfig, testCutluyApiKey } from "../services/cutluyService";
 import {
   getPaymentGatewaySettings,
@@ -90,7 +94,97 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   onUpdateUsersList,
   onPreviewDrama,
 }) => {
-  const [activeTab, setActiveTab] = useState<"analytics" | "catalog" | "cutluy" | "users">("analytics");
+  const [activeTab, setActiveTab] = useState<"analytics" | "catalog" | "cutluy" | "users" | "promos">("analytics");
+
+  // --- Promo Codes tab state ---
+  const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
+  const [promoNotice, setPromoNotice] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [promoForm, setPromoForm] = useState({
+    code: "",
+    type: "percent" as PromoCodeType,
+    value: "10",
+    description: "",
+    maxUses: "0",
+    expiresAt: "",
+  });
+  const [isSavingPromo, setIsSavingPromo] = useState<boolean>(false);
+
+  useEffect(() => {
+    const unsub = subscribeToPromoCodes(setPromoCodes);
+    return () => unsub();
+  }, []);
+
+  const handleCreatePromoCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPromoNotice(null);
+    const key = normalizePromoCode(promoForm.code);
+    if (!/^[A-Z0-9_-]{3,24}$/.test(key)) {
+      setPromoNotice({ message: "Code must be 3-24 characters: letters, numbers, '-' or '_'.", type: "error" });
+      return;
+    }
+    const value = Number(promoForm.value);
+    if (!Number.isFinite(value) || value <= 0) {
+      setPromoNotice({ message: "Discount amount must be greater than 0.", type: "error" });
+      return;
+    }
+    if (promoForm.type === "percent" && value > 100) {
+      setPromoNotice({ message: "Percentage discount cannot exceed 100%.", type: "error" });
+      return;
+    }
+    if (promoForm.type === "free_days" && !Number.isInteger(value)) {
+      setPromoNotice({ message: "Free VIP days must be a whole number (e.g. 3 or 7).", type: "error" });
+      return;
+    }
+    const maxUses = parseInt(promoForm.maxUses || "0", 10) || 0;
+    if (promoCodes.some((p) => p.id === key)) {
+      setPromoNotice({ message: `Code "${key}" already exists.`, type: "error" });
+      return;
+    }
+    setIsSavingPromo(true);
+    try {
+      await savePromoCode({
+        id: key,
+        code: key,
+        type: promoForm.type,
+        value,
+        description: promoForm.description.trim(),
+        maxUses,
+        usedCount: 0,
+        redeemedBy: [],
+        expiresAt: promoForm.expiresAt ? new Date(promoForm.expiresAt + "T23:59:59").toISOString() : null,
+        active: true,
+        createdAt: new Date().toISOString(),
+        createdBy: user?.email || "",
+      });
+      setPromoNotice({ message: `✅ Promo code "${key}" created.`, type: "success" });
+      setPromoForm({ code: "", type: "percent", value: "10", description: "", maxUses: "0", expiresAt: "" });
+    } catch (err: any) {
+      setPromoNotice({ message: `Failed to create code: ${err?.message || err}`, type: "error" });
+    } finally {
+      setIsSavingPromo(false);
+    }
+  };
+
+  const handleTogglePromoActive = async (promo: PromoCode) => {
+    setPromoNotice(null);
+    try {
+      await setPromoCodeActive(promo.id, promo.active === false);
+      setPromoNotice({ message: `✅ "${promo.code}" ${promo.active === false ? "re-activated" : "deactivated"}.`, type: "success" });
+    } catch (err: any) {
+      setPromoNotice({ message: `Failed: ${err?.message || err}`, type: "error" });
+    }
+  };
+
+  const handleDeletePromo = async (promo: PromoCode) => {
+    if (!window.confirm(`Delete promo code "${promo.code}"? Past redemptions stay in user transactions.`)) return;
+    setPromoNotice(null);
+    try {
+      await deletePromoCode(promo.id);
+      setPromoNotice({ message: `🗑️ "${promo.code}" deleted.`, type: "success" });
+    } catch (err: any) {
+      setPromoNotice({ message: `Failed: ${err?.message || err}`, type: "error" });
+    }
+  };
 
   // Local fallback state for users if not passed via props
   const [internalUsersList, setInternalUsersList] = useState<UserProfile[]>(() => {
@@ -955,6 +1049,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
             >
               <Users className="w-4 h-4 shrink-0" />
               <span>Users ({currentUsersList.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab("promos")}
+              className={`shrink-0 px-3.5 sm:px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer ${
+                activeTab === "promos"
+                  ? "bg-amber-600 text-white shadow-md shadow-amber-900/30"
+                  : "text-gray-400 hover:text-white"
+              }`}
+            >
+              <Ticket className="w-4 h-4 shrink-0" />
+              <span>Promo Codes ({promoCodes.length})</span>
             </button>
           </div>
 
@@ -3384,6 +3491,219 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
           </div>
         </div>
       )}
+      {/* Tab Content 5: Promo Codes Management */}
+      {activeTab === "promos" && (
+        <div className="space-y-6 animate-fadeIn">
+          {promoNotice && (
+            <div
+              className={`p-4 rounded-2xl border flex items-center justify-between text-xs font-bold animate-fadeIn ${
+                promoNotice.type === "success"
+                  ? "bg-emerald-950/40 border-emerald-500/30 text-emerald-300"
+                  : "bg-red-950/40 border-red-500/30 text-red-300"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {promoNotice.type === "success" ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 text-red-400" />
+                )}
+                <span>{promoNotice.message}</span>
+              </div>
+              <button onClick={() => setPromoNotice(null)} className="text-gray-400 hover:text-white p-1 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* Create Promo Code Form */}
+          <form onSubmit={handleCreatePromoCode} className="bg-[#141414] border border-white/10 rounded-3xl p-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center">
+                <Ticket className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">Create Promo Code</h3>
+                <p className="text-[10px] text-gray-400">Users apply codes at checkout in the VIP Upgrade modal.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Code</label>
+                <input
+                  value={promoForm.code}
+                  onChange={(e) => setPromoForm({ ...promoForm, code: e.target.value.toUpperCase() })}
+                  placeholder="e.g. VIPWELCOME"
+                  className="w-full bg-[#181818] border border-white/10 rounded-xl px-3 py-2.5 text-xs font-bold text-white tracking-widest uppercase focus:outline-none focus:border-amber-500/60"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Discount Type</label>
+                <select
+                  value={promoForm.type}
+                  onChange={(e) => setPromoForm({ ...promoForm, type: e.target.value as PromoCodeType })}
+                  className="w-full bg-[#181818] border border-white/10 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-amber-500/60 cursor-pointer"
+                >
+                  <option value="percent">Percentage (%) OFF</option>
+                  <option value="fixed">Fixed Amount ($ OFF)</option>
+                  <option value="free_days">Free VIP Days (instant, no payment)</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">
+                  {promoForm.type === "percent" ? "Percent (%)" : promoForm.type === "fixed" ? "Amount ($)" : "Free Days"}
+                </label>
+                <input
+                  type="number"
+                  min={promoForm.type === "percent" ? 1 : 1}
+                  max={promoForm.type === "percent" ? 100 : undefined}
+                  step={promoForm.type === "fixed" ? 0.01 : 1}
+                  value={promoForm.value}
+                  onChange={(e) => setPromoForm({ ...promoForm, value: e.target.value })}
+                  placeholder={promoForm.type === "percent" ? "20" : promoForm.type === "fixed" ? "1.50" : "7"}
+                  className="w-full bg-[#181818] border border-white/10 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-amber-500/60"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Max Uses (0 = unlimited)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={promoForm.maxUses}
+                  onChange={(e) => setPromoForm({ ...promoForm, maxUses: e.target.value })}
+                  className="w-full bg-[#181818] border border-white/10 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-amber-500/60"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Expires (optional)</label>
+                <input
+                  type="date"
+                  value={promoForm.expiresAt}
+                  onChange={(e) => setPromoForm({ ...promoForm, expiresAt: e.target.value })}
+                  className="w-full bg-[#181818] border border-white/10 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-amber-500/60"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Note (internal)</label>
+                <input
+                  value={promoForm.description}
+                  onChange={(e) => setPromoForm({ ...promoForm, description: e.target.value })}
+                  placeholder="e.g. Khmer New Year campaign"
+                  className="w-full bg-[#181818] border border-white/10 rounded-xl px-3 py-2.5 text-xs font-bold text-white focus:outline-none focus:border-amber-500/60"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <p className="text-[10px] text-gray-500">Each user can redeem a code once. Codes are checked live against usage limit & expiry.</p>
+              <button
+                type="submit"
+                disabled={isSavingPromo}
+                className="px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-500 text-black text-xs font-black cursor-pointer disabled:opacity-50 flex items-center gap-2 transition-all active:scale-95"
+              >
+                <Plus className="w-4 h-4" />
+                <span>{isSavingPromo ? "Creating..." : "Create Code"}</span>
+              </button>
+            </div>
+          </form>
+
+          {/* Promo Codes Table */}
+          <div className="bg-[#141414] border border-white/10 rounded-3xl overflow-hidden">
+            <div className="overflow-x-auto custom-scrollbar">
+              <table className="w-full text-left text-xs text-gray-200 min-w-[720px]">
+                <thead className="bg-[#181818] text-gray-400 uppercase text-[10px] tracking-wider">
+                  <tr>
+                    <th className="px-4 py-3 font-bold">Code</th>
+                    <th className="px-4 py-3 font-bold">Discount</th>
+                    <th className="px-4 py-3 font-bold">Usage</th>
+                    <th className="px-4 py-3 font-bold">Expires</th>
+                    <th className="px-4 py-3 font-bold">Status</th>
+                    <th className="px-4 py-3 font-bold text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {promoCodes.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
+                        No promo codes yet — create one above.
+                      </td>
+                    </tr>
+                  )}
+                  {promoCodes.map((p) => {
+                    const expired = Boolean(p.expiresAt && new Date(p.expiresAt) < new Date());
+                    const maxed = (p.maxUses ?? 0) > 0 && (p.usedCount ?? 0) >= p.maxUses;
+                    const isExpiredOrMaxed = expired || maxed;
+                    return (
+                      <tr key={p.id} className="hover:bg-white/[0.03]">
+                        <td className="px-4 py-3">
+                          <p className="font-mono font-black text-white tracking-wider">{p.code}</p>
+                          {p.description && <p className="text-[10px] text-gray-500 mt-0.5">{p.description}</p>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded-lg font-bold text-[10px] border ${
+                            p.type === "free_days"
+                              ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+                              : "bg-amber-500/15 border-amber-500/40 text-amber-300"
+                          }`}>
+                            {p.type === "percent" && `${p.value}% OFF`}
+                            {p.type === "fixed" && `$${Number(p.value).toFixed(2)} OFF`}
+                            {p.type === "free_days" && `FREE ${p.value} Days VIP`}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <p className="font-bold text-white">{p.usedCount || 0}{p.maxUses > 0 ? ` / ${p.maxUses}` : " / ∞"}</p>
+                          <p className="text-[10px] text-gray-500">{(p.redeemedBy || []).length} unique user(s)</p>
+                        </td>
+                        <td className="px-4 py-3">
+                          {p.expiresAt ? (
+                            <span className={expired ? "text-red-400 font-bold" : "text-gray-300"}>
+                              {new Date(p.expiresAt).toLocaleDateString()}
+                            </span>
+                          ) : (
+                            <span className="text-gray-500">Never</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 rounded-full font-bold text-[10px] border ${
+                            p.active === false
+                              ? "bg-gray-500/15 border-gray-500/40 text-gray-400"
+                              : isExpiredOrMaxed
+                              ? "bg-red-500/15 border-red-500/40 text-red-300"
+                              : "bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+                          }`}>
+                            {p.active === false ? "Disabled" : expired ? "Expired" : maxed ? "Limit reached" : "Active"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => handleTogglePromoActive(p)}
+                              title={p.active === false ? "Re-activate" : "Deactivate"}
+                              className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-gray-300 text-[10px] font-bold cursor-pointer flex items-center gap-1 transition-all"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              <span>{p.active === false ? "Enable" : "Disable"}</span>
+                            </button>
+                            <button
+                              onClick={() => handleDeletePromo(p)}
+                              title="Delete code"
+                              className="p-1.5 rounded-lg bg-red-600/15 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/30 cursor-pointer transition-all"
+                            >
+                              <TrashIcon className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Bulk Drama Import Modal (CSV & JSON Parser) */}
       <BulkDramaImportModal
         isOpen={showBulkImportModal}

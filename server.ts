@@ -1066,6 +1066,104 @@ app.post(["/webhooks/cutluy", "/api/webhooks/cutluy"], (req, res) => {
   return res.status(200).json({ received: true, type: event?.type || "ok" });
 });
 
+// ======================= PROMO CODES =======================
+// Server-side Firestore REST helpers (public rules allow these two mutations:
+// listing read = public; single-field update on promoCodes/{code} = public).
+function fsPostJson(pathname: string, payload: unknown, timeoutMs = 8000): Promise<{ status: number; data: any }> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const req = https.request(
+      `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/${FIRESTORE_DB}/${pathname}`,
+      { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) } },
+      (res) => {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => {
+          try {
+            resolve({ status: res.statusCode || 0, data: data ? JSON.parse(data) : {} });
+          } catch (e) { reject(e); }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => req.destroy(new Error("Firestore write timeout")));
+    req.end(body);
+  });
+}
+
+// Promo redemption endpoint. urdrama.com is Firebase-Hosting-only, so the
+// canonical implementation is the Cloud Function (functions/index.js ->
+// redeemPromo). This Express route mirrors it for `npm run dev` / any Node
+// host; both share the same request/response contract.
+//
+// NOTE: this route writes Firestore over the public REST endpoint, which only
+// succeeds when the caller's credentials satisfy rules (i.e. signed-in admin).
+// For regular users on production, the Cloud Function path is authoritative.
+app.post("/api/promo/redeem", async (req, res) => {
+  try {
+    const code = String(req.body?.code || "").trim().toUpperCase();
+    const userEmail = String(req.body?.userEmail || "").trim().toLowerCase();
+    if (!/^[A-Z0-9_-]{3,24}$/.test(code)) {
+      return res.status(400).json({ ok: false, message: "Invalid promo code format." });
+    }
+
+    // Read the live doc straight from Firestore (never trust the client copy).
+    const snapRes = await new Promise<{ status: number; data: any }>((resolve, reject) => {
+      const r = https.get(
+        `https://firestore.googleapis.com/v1beta1/projects/${FIRESTORE_PROJECT}/databases/${FIRESTORE_DB}/documents/promoCodes/${encodeURIComponent(code)}`,
+        (res2) => {
+          let d = "";
+          res2.on("data", (c) => (d += c));
+          res2.on("end", () => {
+            try { resolve({ status: res2.statusCode || 0, data: d ? JSON.parse(d) : {} }); } catch (e) { reject(e); }
+          });
+        }
+      );
+      r.on("error", reject);
+      r.setTimeout(8000, () => r.destroy(new Error("Firestore read timeout")));
+    });
+    if (snapRes.status !== 200 || !snapRes.data?.fields) {
+      return res.status(404).json({ ok: false, message: "Promo code not found." });
+    }
+
+    const f = snapRes.data.fields;
+    const now = Date.now();
+    const active = f.active?.booleanValue !== false;
+    const expiresAt = f.expiresAt?.stringValue ? new Date(f.expiresAt.stringValue).getTime() : 0;
+    const maxUses = Number(f.maxUses?.integerValue ?? f.maxUses?.doubleValue ?? 0);
+    const usedCount = Number(f.usedCount?.integerValue ?? f.usedCount?.doubleValue ?? 0);
+    const redeemedBy: string[] = (f.redeemedBy?.arrayValue?.values || [])
+      .map((v: any) => v?.stringValue || "")
+      .filter(Boolean);
+
+    if (!active) return res.status(400).json({ ok: false, message: "This code has been deactivated." });
+    if (expiresAt && expiresAt < now) return res.status(400).json({ ok: false, message: "This code has expired." });
+    if (maxUses > 0 && usedCount >= maxUses) return res.status(400).json({ ok: false, message: "This code has reached its usage limit." });
+    if (userEmail && redeemedBy.includes(userEmail)) return res.status(400).json({ ok: false, message: "You have already used this code." });
+
+    // Atomic-ish update: bump usedCount + append redeemer email.
+    const newRedeemed = userEmail ? [...redeemedBy, userEmail] : redeemedBy;
+    const update = {
+      name: `projects/${FIRESTORE_PROJECT}/databases/${FIRESTORE_DB}/documents/promoCodes/${code}`,
+      fields: {
+        usedCount: { integerValue: String(usedCount + 1) },
+        redeemedBy: { arrayValue: { values: newRedeemed.map((e) => ({ stringValue: e })) } },
+        updatedAt: { stringValue: new Date().toISOString() },
+      },
+    };
+    const updRes = await fsPostJson(`documents:commit?currentDocument.exists=true`, { writes: [{ update }] });
+    if (updRes.status !== 200) {
+      console.error("Promo redeem commit failed:", updRes.status, JSON.stringify(updRes.data).slice(0, 300));
+      return res.status(500).json({ ok: false, message: "Could not record the redemption. Please try again." });
+    }
+
+    return res.json({ ok: true, code, usedCount: usedCount + 1 });
+  } catch (err: any) {
+    console.error("Promo redeem error:", err);
+    return res.status(500).json({ ok: false, message: err?.message || "Promo redemption failed." });
+  }
+});
+
 // ======================= SEO / CRAWLABLE ROUTES =======================
 const FIRESTORE_PROJECT = "dramabox-ai";
 const FIRESTORE_DB = "ai-studio-dramahub-19e8f629-73b9-40e9-bfc6-37a8badaab29";

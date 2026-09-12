@@ -15,3 +15,5 @@ sdk_test.mjs
 admin_test.mjs
 admin_test2.mjs
 package-lock.json
+functions/node_modules/
+functions/*.log

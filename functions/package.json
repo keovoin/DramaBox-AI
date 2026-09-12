@@ -1,0 +1,13 @@
+{
+  "name": "dramahub-functions",
+  "description": "Server-side promo code redemption for DramaHub (urdrama.com)",
+  "main": "index.js",
+  "engines": {
+    "node": "20"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.3.2"
+  },
+  "private": true
+}

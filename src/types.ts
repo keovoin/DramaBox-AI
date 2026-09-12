@@ -58,6 +58,7 @@ export interface TransactionRecord {
   purchasedAt: string;
   vipExpiresAt: string;
   status: 'completed';
+  promoCode?: string;
 }
 
 export interface UserProfile {
@@ -132,6 +133,36 @@ export interface SubscriptionPlan {
   period: string;
   popular?: boolean;
   features: string[];
+  promoCode?: string; // applied promo code (normalized), if any
+  promoLabel?: string; // e.g. "20% OFF", "$1.00 OFF", "FREE 7 Days VIP"
+}
+
+export type PromoCodeType = "percent" | "fixed" | "free_days";
+
+export interface PromoCode {
+  id: string; // Firestore doc id = normalized uppercase code
+  code: string; // normalized uppercase code
+  type: PromoCodeType; // percent | fixed ($) | free_days (instant free VIP)
+  value: number; // percent (0-100), dollar amount, or number of free VIP days
+  description?: string;
+  maxUses: number; // 0 = unlimited
+  usedCount: number;
+  redeemedBy: string[]; // lowercase user emails (one redemption per user)
+  expiresAt?: string | null; // ISO date, null = never
+  active: boolean;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt?: string;
+}
+
+export interface PromoDiscount {
+  promo: PromoCode;
+  code: string;
+  originalPrice: number;
+  finalPrice: number;
+  discountAmount: number;
+  freeDays: number | null; // set for free_days codes (plan skipped, instant grant)
+  label: string;
 }
 
 
