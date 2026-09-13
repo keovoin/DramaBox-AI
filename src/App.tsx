@@ -14,6 +14,7 @@ import { InstallAppPrompt } from "./components/InstallAppPrompt";
 import { DRAMA_CATALOG } from "./data/dramas";
 import { Drama, UserProfile, SubscriptionPlan, WatchHistoryItem, TransactionRecord, PaymentGatewayType, PromoDiscount } from "./types";
 import { syncUserProfileToFirestore, subscribeToDramasFromFirestore, syncDramaToFirestore, deleteDramaFromFirestore, subscribeToUsersFromFirestore, db, auth, completeFirebaseLogin, logoutFirebase } from "./lib/firebase";
+import { redeemPromoCode } from "./services/promoService";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, onSnapshot } from "firebase/firestore";
 import { Flame, Sparkles, Star, Plus, Film, Compass, Heart, History, RefreshCw, Shield, Bookmark, Check, Mail } from "lucide-react";
@@ -687,7 +688,23 @@ export default function App() {
     showToast(`🎁 ${planName} activated! Valid until ${baseExpiry.toLocaleDateString()}`);
   };
 
-  const handlePaymentSuccess = (plan: SubscriptionPlan) => {
+  const redeemedCodesRef = useRef<Set<string>>(new Set());
+  const handlePaymentSuccess = async (plan: SubscriptionPlan) => {
+    // Consume the promo code NOW that payment is confirmed (UpgradeModal
+    // only "checked" it). Guarded so duplicate success callbacks for the
+    // same order can't double-increment usage counters.
+    if (plan.promoCode) {
+      const rk = plan.promoCode.toUpperCase();
+      if (!redeemedCodesRef.current.has(rk)) {
+        redeemedCodesRef.current.add(rk);
+        try {
+          await redeemPromoCode(rk, user?.email || "");
+        } catch (err) {
+          // Payment already succeeded — grant VIP regardless; flag for support.
+          console.error("Promo consume after paid failed:", err);
+        }
+      }
+    }
     const now = new Date();
     const isVipActive = Boolean(user?.isVip && user?.vipExpiresAt && new Date(user.vipExpiresAt) > now);
 
