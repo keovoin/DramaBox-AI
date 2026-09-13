@@ -56,11 +56,23 @@ function promoView(p) {
   };
 }
 
-/** Shared usability evaluation against LIVE data (never the client copy). */
+/** Shared usability evaluation against LIVE data (never the client copy).
+ * expiresAt may arrive as an ISO string (admin client) or a Firestore
+ * Timestamp object (console/API writes) — normalize both before comparing. */
+function promoExpired(expiresAt, now) {
+  if (!expiresAt) return false;
+  let ms = null;
+  if (typeof expiresAt === "string" || typeof expiresAt === "number") ms = new Date(expiresAt).getTime();
+  else if (typeof expiresAt.toDate === "function") ms = expiresAt.toDate().getTime();
+  else if (expiresAt._seconds) ms = expiresAt._seconds * 1000;
+  else if (expiresAt.seconds) ms = expiresAt.seconds * 1000;
+  return ms != null && !Number.isNaN(ms) && ms < now;
+}
+
 function usabilityFail(p, email) {
   const now = Date.now();
   if (p.active === false) return [400, "This code has been deactivated."];
-  if (p.expiresAt && new Date(p.expiresAt).getTime() < now) return [400, "This code has expired."];
+  if (promoExpired(p.expiresAt, now)) return [400, "This code has expired."];
   const maxUses = Number(p.maxUses || 0);
   const usedCount = Number(p.usedCount || 0);
   if (maxUses > 0 && usedCount >= maxUses) return [400, "This code has reached its usage limit."];
