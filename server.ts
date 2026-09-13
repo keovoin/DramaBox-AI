@@ -1101,6 +1101,7 @@ function fsPostJson(pathname: string, payload: unknown, timeoutMs = 8000): Promi
 // For regular users on production, the Cloud Function path is authoritative.
 app.post("/api/promo/redeem", async (req, res) => {
   try {
+    const action = String(req.body?.action || "redeem").toLowerCase();
     const code = String(req.body?.code || "").trim().toUpperCase();
     const userEmail = String(req.body?.userEmail || "").trim().toLowerCase();
     if (!/^[A-Z0-9_-]{3,24}$/.test(code)) {
@@ -1140,6 +1141,19 @@ app.post("/api/promo/redeem", async (req, res) => {
     if (expiresAt && expiresAt < now) return res.status(400).json({ ok: false, message: "This code has expired." });
     if (maxUses > 0 && usedCount >= maxUses) return res.status(400).json({ ok: false, message: "This code has reached its usage limit." });
     if (userEmail && redeemedBy.includes(userEmail)) return res.status(400).json({ ok: false, message: "You have already used this code." });
+
+    // Non-consuming validation (mirrors the Cloud Function "check" action).
+    if (action === "check") {
+      const rawVal = (v: any) => v?.stringValue ?? v?.integerValue ?? v?.doubleValue ?? v?.booleanValue ?? null;
+      return res.json({
+        ok: true,
+        promo: {
+          code, type: rawVal(f.type), value: Number(f.value?.doubleValue ?? f.value?.integerValue ?? 0),
+          description: f.description?.stringValue || "", maxUses, usedCount, redeemedBy,
+          expiresAt: f.expiresAt?.stringValue ?? null, active, createdAt: f.createdAt?.stringValue || "",
+        },
+      });
+    }
 
     // Atomic-ish update: bump usedCount + append redeemer email.
     const newRedeemed = userEmail ? [...redeemedBy, userEmail] : redeemedBy;

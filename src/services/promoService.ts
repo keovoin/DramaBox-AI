@@ -12,7 +12,7 @@ import {
   onSnapshot,
   setDoc,
 } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { auth, db } from "../lib/firebase";
 import { PromoCode, PromoDiscount, SubscriptionPlan } from "../types";
 
 const PROMO_COLLECTION = "promoCodes";
@@ -146,46 +146,77 @@ export async function deletePromoCode(codeKey: string): Promise<void> {
 }
 
 /**
- * Consume a redemption (increments usedCount + records user email).
- * Production: Firebase Cloud Function `redeemPromo` (urdrama.com is
- * Firebase-Hosting-only, so there is no Express server there). The function
- * runs with admin privileges and re-validates every rule server-side inside a
- * Firestore transaction. Local dev: the mirrored Express route on :3000.
+ * Relay to the redeemPromo Cloud Function (admin privileges + re-validation).
+ * action "check"  → validate without consuming; resolves the live promo doc.
+ * action "redeem" → validate + consume atomically.
+ * The caller's Firebase ID token is attached so the server trusts the email
+ * from the token (prevents attributing redemptions to other users).
  */
 const PROMO_FN_URL = "https://asia-southeast1-dramabox-ai.cloudfunctions.net/redeemPromo";
 
-export async function redeemPromoCode(code: string, userEmail: string): Promise<void> {
+async function callPromoRelay(
+  action: "check" | "redeem",
+  code: string,
+  userEmail: string
+): Promise<any> {
   const key = normalizePromoCode(code);
-  const payload = JSON.stringify({ code: key, userEmail: userEmail || "" });
-
-  // 1) Cloud Function (production)
+  let idToken = "";
   try {
-    const res = await fetch(PROMO_FN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: payload,
-    });
+    idToken = await (auth.currentUser?.getIdToken?.() || Promise.resolve(""));
+  } catch {
+    idToken = "";
+  }
+  const payload = JSON.stringify({ action, code: key, userEmail: userEmail || "" });
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (idToken) headers["Authorization"] = "Bearer " + idToken;
+
+  try {
+    const res = await fetch(PROMO_FN_URL, { method: "POST", headers, body: payload });
     const data = await res.json().catch(() => ({}));
-    if (data.ok === true) return;
-    // A definitive business rejection (expired/used/limit/not found) — surface it.
+    if (data.ok === true) return data;
     if (res.status === 400 || res.status === 404) {
       throw new Error(data.message || "Promo code redemption failed");
     }
     throw new Error(data.message || "Promo redemption failed");
   } catch (fnErr: any) {
-    // 2) Local dev fallback (Express mirror) when the function is unreachable.
+    // Local dev fallback (Express mirror on :3000) when the function is down.
     if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
       const res = await fetch("/api/promo/redeem", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: payload,
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.ok === false) {
         throw new Error(data.message || data.error || "Promo code redemption failed");
       }
-      return;
+      return data;
     }
     throw fnErr instanceof Error ? fnErr : new Error("Promo redemption failed");
   }
+}
+
+/**
+ * Validate a code WITHOUT consuming it (used when the user hits "Apply").
+ * Returns the live promo doc (server-side truth) or null.
+ */
+export async function checkPromoCode(
+  code: string,
+  userEmail: string
+): Promise<{ promo: PromoCode } | { error: string } | null> {
+  try {
+    const data = await callPromoRelay("check", code, userEmail);
+    if (data?.promo) {
+      const p: PromoCode = { id: normalizePromoCode(code), ...data.promo };
+      return { promo: p };
+    }
+    return null;
+  } catch (err: any) {
+    return { error: err?.message || "Promo code could not be verified." };
+  }
+}
+
+/** Consume a redemption (increments usedCount + records user email). */
+export async function redeemPromoCode(code: string, userEmail: string): Promise<void> {
+  await callPromoRelay("redeem", code, userEmail);
 }

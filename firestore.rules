@@ -37,14 +37,19 @@ service cloud.firestore {
     // Promo codes: public read (checkout validates codes client-side),
     // admin-only create/delete, and redemption updates restricted to the
     // usage-counter fields only (done via the server relay with this key).
+    // Promo code DOCS are admin-managed. Users never read them directly:
+    // the UpgradeModal discovers/validates codes through the redeem relay,
+    // which re-checks expiry/limits per user server-side. Public read would
+    // let anyone list all secret codes via Firestore.
     match /promoCodes {
-      allow read: if true;
+      allow list: if request.auth != null && request.auth.token.email == "keovoin@gmail.com";
     }
     match /promoCodes/{codeId} {
-      allow read: if true;
+      allow read: if request.auth != null && request.auth.token.email == "keovoin@gmail.com";
       allow create, delete: if request.auth != null && request.auth.token.email == "keovoin@gmail.com";
+      // Redeem relay (admin SDK Cloud Function) bypasses rules entirely;
+      // this narrow update path exists only for the dev-server mirror.
       allow update: if request.auth != null && request.auth.token.email == "keovoin@gmail.com"
-        // Server relay (admin SDK key) bypasses these rules entirely.
         || (request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['usedCount', 'redeemedBy', 'updatedAt'])
            && request.resource.data.usedCount == resource.data.usedCount + 1);

@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { X, Crown, Check, ShieldCheck, CreditCard, Clock, Percent, Zap, Ticket, Loader2, Sparkles } from "lucide-react";
 import { PromoDiscount, SubscriptionPlan, UserProfile, PaymentGatewayType } from "../types";
 import { getPaymentGatewaySettings } from "../services/gatewayService";
-import { computePlanDiscount, fetchPromoByCode, normalizePromoCode, promoUsability, redeemPromoCode } from "../services/promoService";
+import { checkPromoCode, computePlanDiscount, normalizePromoCode, redeemPromoCode } from "../services/promoService";
 
 interface UpgradeModalProps {
   onClose: () => void;
@@ -105,18 +105,19 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
     setPromoType("checking");
     setPromoNotice("");
     try {
-      const found = await fetchPromoByCode(key);
-      if (!found) {
+      // Validate through the server relay (promo docs are admin-only in
+      // Firestore; the relay returns the live doc without consuming it).
+      const result = await checkPromoCode(key, user?.email || "");
+      if (!result) {
         setPromoNotice("❌ Invalid promo code. Please check and try again.");
         return;
       }
-      const usable = promoUsability(found, user?.email);
-      if (!usable.ok) {
-        setPromoNotice(`❌ ${usable.reason}`);
+      if ("error" in result) {
+        setPromoNotice(`❌ ${result.error}`);
         return;
       }
       const base = getPlanWithDiscount(selectedPlanKey);
-      const applied = computePlanDiscount(found, base);
+      const applied = computePlanDiscount(result.promo, base);
       setPromo(applied);
       setCodeInput(key);
       setPromoNotice(`✅ ${applied.label} applied!`);
@@ -153,16 +154,9 @@ export const UpgradeModal: React.FC<UpgradeModalProps> = ({
       ? { ...plan, promoCode: promo.code, promoLabel: promo.label }
       : plan;
 
-    // Discounted (non-free) path: consume the code up-front; checkout continues
-    // with the reduced price already baked into planToBuy.price.
-    if (promo) {
-      try {
-        await redeemPromoCode(promo.code, user?.email || "");
-      } catch (err: any) {
-        setPromoNotice(`❌ ${err?.message || "This code could not be redeemed."}`);
-        return;
-      }
-    }
+    // Discounted (non-free) path: the code is NOT consumed here — that would
+    // burn it if the buyer abandons the payment. App.handlePaymentSuccess
+    // redeems it (server-validated) once the gateway confirms PAID.
     onClose();
     onOpenCutluyCheckout(planToBuy, promo, activeGateway, activeMode);
   };
