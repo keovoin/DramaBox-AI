@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User, createUserWithEmailAndPassword, signInWithEmailAndPassword, updateProfile } from "firebase/auth";
 import { getFirestore, doc, setDoc, getDoc, getDocFromServer, collection, onSnapshot, deleteDoc } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import { UserProfile, Drama } from "../types";
@@ -203,6 +203,33 @@ export async function completeFirebaseLogin(fbUser: User): Promise<UserProfile> 
   };
   await syncUserProfileToFirestore(userProfile);
   return userProfile;
+}
+
+// Email + password sign-up / sign-in via REAL Firebase Auth (so the user has
+// a genuine credential and Firestore security rules accept their profile
+// write). Returns a resolved DramaHub UserProfile synced to Firestore.
+export async function signUpWithEmail(email: string, password: string, name: string): Promise<UserProfile> {
+  const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+  await updateProfile(cred.user, { displayName: name.trim() || email.split("@")[0] });
+  const isAdmin = email.trim().toLowerCase() === "keovoin@gmail.com";
+  const userProfile: UserProfile = {
+    id: cred.user.uid,
+    name: name.trim() || email.split("@")[0],
+    email: email.trim(),
+    authMethod: "gmail",
+    avatarUrl: cred.user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(name || email)}&background=random`,
+    isVip: isAdmin,
+    vipExpiresAt: isAdmin ? "2030-12-31" : undefined,
+    coins: 0,
+    createdAt: new Date().toISOString(),
+  };
+  await syncUserProfileToFirestore(userProfile);
+  return userProfile;
+}
+
+export async function signInWithEmail(email: string, password: string): Promise<UserProfile> {
+  const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return completeFirebaseLogin(cred.user);
 }
 
 // Trigger Google Popup Login via Firebase Auth

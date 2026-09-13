@@ -12,7 +12,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { UserProfile } from "../types";
-import { loginWithFirebaseGoogle, syncUserProfileToFirestore, auth, googleProvider, completeFirebaseLogin } from "../lib/firebase";
+import { loginWithFirebaseGoogle, syncUserProfileToFirestore, auth, googleProvider, completeFirebaseLogin, signUpWithEmail, signInWithEmail } from "../lib/firebase";
 import { signInWithRedirect, getRedirectResult, linkWithRedirect } from "firebase/auth";
 
 interface AuthModalProps {
@@ -45,6 +45,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // Gmail State
   const [gmailEmail, setGmailEmail] = useState<string>("");
   const [gmailName, setGmailName] = useState<string>("");
+  const [gmailPassword, setGmailPassword] = useState<string>("");
+  // "signin" = existing account, "register" = create a real Firebase account
+  const [emailMode, setEmailMode] = useState<"signin" | "register">("register");
 
   // Phone State
   const [countryCode, setCountryCode] = useState<string>("+855");
@@ -172,36 +175,45 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   return () => window.removeEventListener("message", handleMessage);
 }, [onLoginSuccess, onClose]);
 
-  // Handle Manual Gmail Form Submission
-  const handleGmailLogin = (e: React.FormEvent) => {
+  // Handle Email + Password sign-in / registration (REAL Firebase Auth).
+  // A genuine Firebase credential is what lets security rules accept the
+  // user's own profile write — that is how new accounts reach the dashboard.
+  const handleGmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!gmailEmail.trim()) return;
+    if (gmailPassword.length < 6) {
+      setNotice("Password must be at least 6 characters.");
+      return;
+    }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const emailUsername = gmailEmail.split("@")[0] || "User";
-      const displayName = gmailName.trim() || emailUsername.charAt(0).toUpperCase() + emailUsername.slice(1);
-      const isAdmin = gmailEmail.trim().toLowerCase() === "keovoin@gmail.com";
-
-      const userProfile: UserProfile = {
-        id: `usr_gmail_${Date.now()}`,
-        name: displayName,
-        email: gmailEmail.trim(),
-        authMethod: "gmail",
-        avatarUrl: `https://lh3.googleusercontent.com/a/default-user=s96-c`,
-        isVip: isAdmin,
-        vipExpiresAt: isAdmin ? "2030-12-31" : undefined,
-        coins: 0,
-        createdAt: new Date().toISOString(),
-      };
-
-      // NOTE: manual entry is unverified — no Firebase credential exists, so a
-      // Firestore write here would be rejected by security rules anyway. Skip the
-      // sync and keep the session local-only.
-      onLoginSuccess(userProfile);
+    setNotice("");
+    try {
+      const profile = emailMode === "register"
+        ? await signUpWithEmail(gmailEmail, gmailPassword, gmailName)
+        : await signInWithEmail(gmailEmail, gmailPassword);
+      onLoginSuccess(profile);
       setIsLoading(false);
       onClose();
-    }, 600);
+    } catch (err: any) {
+      setIsLoading(false);
+      const code = err?.code || "";
+      if (code === "auth/email-already-in-use") {
+        setNotice("That email is already registered — switch to Sign In below.");
+      } else if (code === "auth/invalid-email") {
+        setNotice("That email address doesn't look right.");
+      } else if (code === "auth/weak-password") {
+        setNotice("Password is too weak (min 6 characters).");
+      } else if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        setNotice("Wrong email or password. New here? Switch to Create Account.");
+      } else if (code === "auth/operation-not-allowed" || code === "auth/configuration-not-found") {
+        setNotice("Email/password sign-in isn't enabled yet on this Firebase project.");
+      } else if (code === "auth/network-request-failed") {
+        setNotice("Network error — check your connection and try again.");
+      } else {
+        setNotice(err?.message || "Sign-in failed. Try Google above instead.");
+      }
+    }
   };
 
   // Handle Send Phone OTP Code
@@ -350,23 +362,46 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
             <div className="flex items-center gap-3 my-2">
               <div className="flex-1 h-px bg-white/10" />
-              <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Or enter Gmail manually</span>
+              <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Or use email &amp; password</span>
               <div className="flex-1 h-px bg-white/10" />
+            </div>
+
+            {/* Register / Sign-in toggle */}
+            <div className="grid grid-cols-2 p-1 bg-[#181818] rounded-xl border border-white/5">
+              <button
+                type="button"
+                onClick={() => { setEmailMode("register"); setNotice(""); }}
+                className={`py-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  emailMode === "register" ? "bg-white/10 text-white" : "text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                Create Account
+              </button>
+              <button
+                type="button"
+                onClick={() => { setEmailMode("signin"); setNotice(""); }}
+                className={`py-2 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                  emailMode === "signin" ? "bg-white/10 text-white" : "text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                Sign In
+              </button>
             </div>
 
             <form onSubmit={handleGmailLogin} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-bold text-gray-300 mb-1.5">
-                  Your Gmail Address *
+                  Email Address *
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 absolute left-3.5 top-3.5 text-gray-500" />
                   <input
                     type="email"
                     required
+                    autoComplete="email"
                     value={gmailEmail}
                     onChange={(e) => setGmailEmail(e.target.value)}
-                    placeholder="name@gmail.com"
+                    placeholder="name@email.com"
                     className="w-full bg-[#181818] border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors"
                   />
                 </div>
@@ -374,26 +409,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-gray-300 mb-1.5">
-                  Your Name (Optional)
+                  Password *
                 </label>
                 <div className="relative">
-                  <User className="w-4 h-4 absolute left-3.5 top-3.5 text-gray-500" />
+                  <KeyRound className="w-4 h-4 absolute left-3.5 top-3.5 text-gray-500" />
                   <input
-                    type="text"
-                    value={gmailName}
-                    onChange={(e) => setGmailName(e.target.value)}
-                    placeholder="e.g., Keo Voin"
+                    type="password"
+                    required
+                    minLength={6}
+                    autoComplete={emailMode === "register" ? "new-password" : "current-password"}
+                    value={gmailPassword}
+                    onChange={(e) => setGmailPassword(e.target.value)}
+                    placeholder="At least 6 characters"
                     className="w-full bg-[#181818] border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors"
                   />
                 </div>
               </div>
 
+              {emailMode === "register" && (
+                <div>
+                  <label className="block text-xs font-bold text-gray-300 mb-1.5">
+                    Your Name (Optional)
+                  </label>
+                  <div className="relative">
+                    <User className="w-4 h-4 absolute left-3.5 top-3.5 text-gray-500" />
+                    <input
+                      type="text"
+                      value={gmailName}
+                      onChange={(e) => setGmailName(e.target.value)}
+                      placeholder="e.g., Keo Voin"
+                      className="w-full bg-[#181818] border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-red-500 transition-colors"
+                    />
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
-                disabled={isLoading || !gmailEmail.trim()}
+                disabled={isLoading || !gmailEmail.trim() || gmailPassword.length < 6}
                 className="w-full py-3 rounded-2xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-red-900/40 flex items-center justify-center gap-2.5 transition-all active:scale-95 cursor-pointer mt-2"
               >
-                <span>{isLoading ? "Signing in..." : "Continue with Gmail Address"}</span>
+                <span>{isLoading ? "Please wait..." : emailMode === "register" ? "Create Account" : "Sign In with Email"}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
